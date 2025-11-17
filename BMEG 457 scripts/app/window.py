@@ -7,11 +7,10 @@ from app.data_receiver import DataReceiverThread
 
 
 class SoundtrackWindow(QtWidgets.QWidget):
-    def __init__(self, device, client_socket):
+    def __init__(self, device):
         super().__init__()
-
         self.device = device
-        self.client_socket = client_socket
+        self.client_socket = None
         self.tracks = []
         self.plot_time = Config.DEFAULT_PLOT_TIME
         self.is_paused = False
@@ -61,8 +60,8 @@ class SoundtrackWindow(QtWidgets.QWidget):
         self.timer = QtCore.QTimer()
         self.timer.timeout.connect(self.update_plot)
         self.timer.start(Config.UPDATE_RATE)
-
-        self.receiver_thread = DataReceiverThread(self.device, self.client_socket, self.tracks)
+        self.receiver_thread = None
+        #self.receiver_thread = DataReceiverThread(self.device, self.client_socket, self.tracks)
 
         ''' Processor stages here
         self.receiver_thread.processor.add_stage(lambda d: d * 0.001)
@@ -71,8 +70,8 @@ class SoundtrackWindow(QtWidgets.QWidget):
         self.receiver_thread.processor.add_stage(transforms.fft_transform)
         '''
 
-        self.receiver_thread.status_update.connect(self.update_status)
-        self.receiver_thread.start()
+        #self.receiver_thread.status_update.connect(self.update_status)
+        #self.receiver_thread.start()
 
     def init_tracks(self):
         if self.device.nchannels == 72:
@@ -144,3 +143,29 @@ class SoundtrackWindow(QtWidgets.QWidget):
         self.receiver_thread.wait()
         self.client_socket.close()
         event.accept()
+
+    def start_recording(self):
+        print("Recording started")
+        self.is_paused = False
+        self.timer.start()
+        self.receiver_thread.running = True
+
+    def stop_recording(self):
+        print("Recording stopped")
+        self.is_paused = True
+        self.timer.stop()
+        self.receiver_thread.running = False
+
+    def set_client_socket(self, socket):
+        self.client_socket = socket
+
+    def initialize_receiver(self):
+        self.receiver_thread = DataReceiverThread(
+            self.device,
+            self.client_socket,
+            self.tracks
+        )
+        self.receiver_thread.status_update.connect(self.update_status)
+        self.receiver_thread.start()
+
+

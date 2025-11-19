@@ -21,28 +21,28 @@ def main():
     ctrl = ControlWindow()
     ctrl.show()
 
-    ctrl.start_clicked.connect(handle_start(device, window))
+        # Start button: connect → create command → start server → show window → begin recording
+    def handle_start():
+        try:
+            device.create_command(FSAMP=0, NCH=0, MODE=0,
+                                    HRES=0, HPF=0, EXTEN=0,
+                                    TRIG=0, REC=0, GO=0)
+
+            device.start_server()   # <-- Connect here
+
+            window.set_client_socket(device.client_socket)
+            window.initialize_receiver()
+
+            window.start_recording()
+            window.show()
+
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(None, "Connection Error", str(e))
+
+    ctrl.start_clicked.connect(handle_start)
     ctrl.stop_clicked.connect(window.stop_recording)
 
     app.exec_()
-
-# Start button: connect → create command → start server → show window → begin recording
-def handle_start(device, window):
-    try:
-        device.create_command(FSAMP=0, NCH=0, MODE=0,
-                                HRES=0, HPF=0, EXTEN=0,
-                                TRIG=0, REC=0, GO=0)
-
-        device.start_server()   # <-- Connect here
-
-        window.set_client_socket(device.client_socket)
-        window.initialize_receiver()
-
-        window.start_recording()
-        window.show()
-
-    except Exception as e:
-        QtWidgets.QMessageBox.critical(None, "Connection Error", str(e))
 
 if __name__ == "__main__":
     main()

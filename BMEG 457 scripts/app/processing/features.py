@@ -15,6 +15,8 @@ def mav(data):
 # need to calculate metrics now
 
 #relative muscle strength, time to muscle fatigue, activation timing, muscle-cocontraction 
+
+# edit this to find the first contraction without a base # of samples
 def first_contraction_indices(rms, baseline_samples=200, threshold_factor=2):
     """
     Find the start and end indices of the first contraction in an RMS array.
@@ -54,26 +56,23 @@ def first_contraction_indices(rms, baseline_samples=200, threshold_factor=2):
     
     return start_idx, end_idx
 
-
+def calculate_baseline(data):
+    start_i, end_i = first_contraction_indices(data, baseline_samples=3, threshold_factor=1.5)
+    baseline = np.mean(data[start_i:end_i]) if start_i is not None and end_i is not None else np.mean(data[:200])
+    return baseline
     
 # monitor changes in RMS (increases as fatigue progresses due to increased motor unit recruitment approx. ~20-30% increase compared to baseline)
 # calculate median (MF) or mean frequency (MNF) (decreases as fatigue progresses due to slowing of muscle fiber conduction velocity)
 # rate of change in RMS (increased by 31.7% in non-atheletes during fatigue) and MF (-0.89 Hz/sec decline in MF during fatigue)
-def time_to_fatigue(raw_data, fs, rms_threshold, mf_threshold):
-    # Processing
-    bandpass_data = processing.filter.butter_bandpass(raw_data, low=20, high=450, fs=fs, order=4)
-    notch_data = processing.filter.notch(bandpass_data, freq=60, fs=fs, quality=30)
-    rec_data = processing.filter.rectify(notch_data)
-
+def time_to_fatigue_post(rec_data, notch_data, fs, rms_threshold, mf_threshold):
     # RMS array calculation
     window_size = 200
     rms = np.sqrt(np.convolve(rec_data**2, np.ones(window_size)/window_size, mode='valid'))
     t_rms = np.arange(len(rms)) / fs  # time vector for rms
     
     # Determine baseline contraction rms
-    start_i, end_i = first_contraction_indices(rms, baseline_samples=3, threshold_factor=1.5)
-    baseline_rms = np.mean(rms[start_i:end_i]) if start_i is not None and end_i is not None else np.mean(rms[:200])
-
+    baseline_rms = calculate_baseline(rms)
+    
     #RMS rate of change
     rms_threshold_value = baseline_rms * 1/rms_threshold
     drms = np.gradient(rms, 1/fs) 
@@ -113,4 +112,33 @@ def time_to_fatigue(raw_data, fs, rms_threshold, mf_threshold):
         time_to_mf_fatigue = None
 
     return time_to_rms_fatigue, time_to_mf_fatigue
+
+# activation timing - RETURNS TIME POINTS WHERE ACTIVATION OCCURS BASED ON BASELINE THRESHOLD
+def activation_timing_post(rms, fs, baseline_threshold): 
+    """
+    Return time points (seconds) where RMS magnitude exceeds `baseline_threshold`.
+
+    Parameters
+    - rms: array-like of RMS values (1D or 2D). If multi-dimensional, it will be flattened.
+    - fs: sampling frequency in Hz
+    - baseline_threshold: scalar threshold to compare RMS against
+
+    Returns
+    - numpy.ndarray of times (seconds) where rms > baseline_threshold. May be empty.
+    """
+    # Ensure a 1-D numpy array
+    rms_arr = np.ravel(np.asarray(rms))
+    t_rms = np.arange(len(rms_arr)) / fs  # time vector for rms
+
+    mask = rms_arr > baseline_threshold
+    return t_rms[mask]
+
+# activation timings - RETURNS TRUE IF ACTIVATION OCCURS BASED ON BASELINE THRESHOLD
+def activation_timing_live(rms, baseline_threshold):
+    # Ensure a 1-D numpy array
+    if rms > baseline_threshold:
+        return True
+    return False
+
+# muscle cocontraction - RETURNS COACTIVATION INDEX BETWEEN TWO MUSCLES
 

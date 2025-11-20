@@ -38,6 +38,9 @@ class Track:
             curve_name = f"Ch {i+1}" if i < 8 or num_channels <= 8 else None
             self.curves.append(self.plot_widget.plot(pen=pen, name=curve_name))
 
+        # by default all channels are visible; use set_visible_channels to change
+        self.visible_channels = list(range(self.num_channels))
+
     def feed(self, packet):
         packet_size = packet.shape[1]
         end_space = self.buffer.shape[1] - self.buffer_index
@@ -53,4 +56,28 @@ class Track:
 
     def draw(self):
         for i, curve in enumerate(self.curves):
+            # draw data for channel i regardless of visibility — visibility is controlled via show()/hide()
             curve.setData(self.time_array, self.buffer[i, :] * self.conv_fact + (self.offset * i))
+
+    def set_visible_channels(self, channels):
+        """
+        Show only the channels listed in `channels` (iterable of channel indices).
+        Channels not listed will be hidden.
+        """
+        channels_set = set(int(c) for c in channels)
+        self.visible_channels = sorted([c for c in channels_set if 0 <= c < self.num_channels])
+
+        for ch_idx, curve in enumerate(self.curves):
+            if ch_idx in channels_set:
+                try:
+                    curve.show()
+                except Exception:
+                    pass
+            else:
+                try:
+                    curve.hide()
+                except Exception:
+                    pass
+
+    def get_visible_channels(self):
+        return list(self.visible_channels)

@@ -5,6 +5,88 @@ from app.config import Config
 from app.track import Track
 from app.data_receiver import DataReceiverThread
 
+
+class ChannelSelectorDialog(QtWidgets.QDialog):
+    def __init__(self, parent, num_channels, selected=None):
+        super().__init__(parent)
+        self.setWindowTitle("Select Channels")
+        self.setModal(True)
+
+        layout = QtWidgets.QVBoxLayout(self)
+
+        grid = QtWidgets.QGridLayout()
+        self.checkboxes = []
+        cols = 8
+        for i in range(num_channels):
+            cb = QtWidgets.QCheckBox(f"{i+1}")
+            cb.setChecked(True if selected is None else (i in selected))
+            self.checkboxes.append(cb)
+            row = i // cols
+            col = i % cols
+            grid.addWidget(cb, row, col)
+
+        layout.addLayout(grid)
+
+        btn_layout = QtWidgets.QHBoxLayout()
+        select_all = QtWidgets.QPushButton("All")
+        select_none = QtWidgets.QPushButton("None")
+        btn_layout.addWidget(select_all)
+        btn_layout.addWidget(select_none)
+        btn_layout.addStretch()
+
+        ok = QtWidgets.QPushButton("OK")
+        cancel = QtWidgets.QPushButton("Cancel")
+        btn_layout.addWidget(ok)
+        btn_layout.addWidget(cancel)
+
+        layout.addLayout(btn_layout)
+
+        select_all.clicked.connect(lambda: [cb.setChecked(True) for cb in self.checkboxes])
+        select_none.clicked.connect(lambda: [cb.setChecked(False) for cb in self.checkboxes])
+        ok.clicked.connect(self.accept)
+        cancel.clicked.connect(self.reject)
+
+    def selected_indices(self):
+        return [i for i, cb in enumerate(self.checkboxes) if cb.isChecked()]
+
+
+class TrackVisibilityDialog(QtWidgets.QDialog):
+    def __init__(self, parent, track_titles, selected=None):
+        super().__init__(parent)
+        self.setWindowTitle("Select Tracks")
+        self.setModal(True)
+
+        layout = QtWidgets.QVBoxLayout(self)
+
+        self.checkboxes = []
+        for title in track_titles:
+            cb = QtWidgets.QCheckBox(title)
+            cb.setChecked(True if selected is None else (title in selected))
+            self.checkboxes.append(cb)
+            layout.addWidget(cb)
+
+        btn_layout = QtWidgets.QHBoxLayout()
+        select_all = QtWidgets.QPushButton("All")
+        select_none = QtWidgets.QPushButton("None")
+        btn_layout.addWidget(select_all)
+        btn_layout.addWidget(select_none)
+        btn_layout.addStretch()
+
+        ok = QtWidgets.QPushButton("OK")
+        cancel = QtWidgets.QPushButton("Cancel")
+        btn_layout.addWidget(ok)
+        btn_layout.addWidget(cancel)
+
+        layout.addLayout(btn_layout)
+
+        select_all.clicked.connect(lambda: [cb.setChecked(True) for cb in self.checkboxes])
+        select_none.clicked.connect(lambda: [cb.setChecked(False) for cb in self.checkboxes])
+        ok.clicked.connect(self.accept)
+        cancel.clicked.connect(self.reject)
+
+    def selected_titles(self):
+        return [cb.text() for cb in self.checkboxes if cb.isChecked()]
+
 # window for plots
 class SoundtrackWindow(QtWidgets.QWidget):
     def __init__(self, device):
@@ -43,7 +125,11 @@ class SoundtrackWindow(QtWidgets.QWidget):
 
         self.main_layout.addWidget(menu)
 
-        # -------- Scroll Area for Tracks --------
+        # Content area: left = plots (scroll area), right = controls
+        content = QtWidgets.QWidget()
+        content_layout = QtWidgets.QHBoxLayout(content)
+
+        # -------- Scroll Area for Tracks (plots) --------
         self.scroll_area = QtWidgets.QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
@@ -53,9 +139,36 @@ class SoundtrackWindow(QtWidgets.QWidget):
         self.scroll_layout = QtWidgets.QVBoxLayout(self.scroll_widget)
 
         self.scroll_area.setWidget(self.scroll_widget)
-        self.main_layout.addWidget(self.scroll_area)
+        content_layout.addWidget(self.scroll_area, stretch=3)
+
+        # -------- Right-side control panel --------
+        self.control_panel = QtWidgets.QWidget()
+        ctrl_layout = QtWidgets.QVBoxLayout(self.control_panel)
+
+        self.start_button = QtWidgets.QPushButton("Start Recording")
+        self.stop_button = QtWidgets.QPushButton("Stop Recording")
+        self.stop_button.setEnabled(False)
+        self.select_channels_button = QtWidgets.QPushButton("Select Channels")
+        self.select_tracks_button = QtWidgets.QPushButton("Select Tracks")
+
+        ctrl_layout.addWidget(self.start_button)
+        ctrl_layout.addWidget(self.stop_button)
+        ctrl_layout.addWidget(self.select_channels_button)
+        ctrl_layout.addWidget(self.select_tracks_button)
+        ctrl_layout.addStretch()
+
+        # Add control panel to the content area
+        content_layout.addWidget(self.control_panel, stretch=0)
+
+        # Add the content area to the main layout
+        self.main_layout.addWidget(content)
 
         self.init_tracks()
+
+        # wire the select channels button to the main HDsEMG track (first track)
+        self.select_channels_button.clicked.connect(self.open_channel_selector)
+        # wire the select tracks button to toggle visibility of whole tracks
+        self.select_tracks_button.clicked.connect(self.open_track_selector)
 
         self.timer = QtCore.QTimer()
         self.timer.timeout.connect(self.update_plot)
@@ -91,6 +204,8 @@ class SoundtrackWindow(QtWidgets.QWidget):
                 ("AUX 2", 1, main + 1, 1, 0.00014648),
             ]
 
+        # store containers so we can show/hide whole tracks later
+        self.track_containers = []
         for title, n, idx, offset, conv in track_info:
             track_container = QtWidgets.QWidget()
             layout = QtWidgets.QVBoxLayout(track_container)
@@ -101,6 +216,7 @@ class SoundtrackWindow(QtWidgets.QWidget):
             track.plot_widget.setMinimumHeight(300)
             layout.addWidget(track.plot_widget)
             self.scroll_layout.addWidget(track_container)
+            self.track_containers.append((title, track_container))
 
         self.scroll_layout.addStretch()
 
@@ -139,9 +255,17 @@ class SoundtrackWindow(QtWidgets.QWidget):
                 track.draw()
 
     def closeEvent(self, event):
-        self.receiver_thread.stop()
-        self.receiver_thread.wait()
-        self.client_socket.close()
+        if self.receiver_thread is not None:
+            try:
+                self.receiver_thread.stop()
+                self.receiver_thread.wait()
+            except Exception:
+                pass
+        if self.client_socket is not None:
+            try:
+                self.client_socket.close()
+            except Exception:
+                pass
         event.accept()
 
     def start_recording(self):
@@ -167,5 +291,32 @@ class SoundtrackWindow(QtWidgets.QWidget):
         )
         self.receiver_thread.status_update.connect(self.update_status)
         self.receiver_thread.start()
+
+    def open_channel_selector(self):
+        # target the main HDsEMG track (assumed to be first)
+        if not self.tracks:
+            return
+        track = self.tracks[0]
+        num = track.num_channels
+        current = getattr(track, 'visible_channels', list(range(num)))
+        dlg = ChannelSelectorDialog(self, num, selected=current)
+        if dlg.exec_() == QtWidgets.QDialog.Accepted:
+            sel = dlg.selected_indices()
+            # apply selection to the track
+            track.set_visible_channels(sel)
+
+    def open_track_selector(self):
+        # open dialog showing track titles to choose which whole tracks to show
+        if not hasattr(self, 'track_containers') or not self.track_containers:
+            return
+        titles = [t for t, _ in self.track_containers]
+        # current visible titles
+        current = [t for t, w in self.track_containers if w.isVisible()]
+        dlg = TrackVisibilityDialog(self, titles, selected=current)
+        if dlg.exec_() == QtWidgets.QDialog.Accepted:
+            sel = dlg.selected_titles()
+            # show/hide containers based on selection
+            for title, widget in self.track_containers:
+                widget.setVisible(title in sel)
 
 

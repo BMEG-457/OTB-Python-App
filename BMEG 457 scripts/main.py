@@ -3,7 +3,7 @@ import pyqtgraph as pg
 
 from app.device import SessantaquattroPlus
 from app.window import SoundtrackWindow
-from app.ui.control_window import ControlWindow
+# control window not used; using built-in controls in SoundtrackWindow
 
 
 def main():
@@ -15,13 +15,9 @@ def main():
 
     # Visualization window (not yet initialized with a socket)
     window = SoundtrackWindow(device)
-    window.hide()
+    window.show()
 
-    # Control UI
-    ctrl = ControlWindow()
-    ctrl.show()
-
-        # Start button: connect → create command → start server → show window → begin recording
+    # Start/Stop handlers will be wired to the window's buttons
     def handle_start():
         try:
             device.create_command(FSAMP=0, NCH=0, MODE=0,
@@ -34,13 +30,27 @@ def main():
             window.initialize_receiver()
 
             window.start_recording()
-            window.show()
+            # toggle buttons
+            try:
+                window.start_button.setEnabled(False)
+                window.stop_button.setEnabled(True)
+            except Exception:
+                pass
 
         except Exception as e:
             QtWidgets.QMessageBox.critical(None, "Connection Error", str(e))
 
-    ctrl.start_clicked.connect(handle_start)
-    ctrl.stop_clicked.connect(window.stop_recording)
+    def handle_stop():
+        try:
+            window.stop_recording()
+            window.start_button.setEnabled(True)
+            window.stop_button.setEnabled(False)
+        except Exception:
+            pass
+
+    # wire the window's buttons
+    window.start_button.clicked.connect(handle_start)
+    window.stop_button.clicked.connect(handle_stop)
 
     app.exec_()
 

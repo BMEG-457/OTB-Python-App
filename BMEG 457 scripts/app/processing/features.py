@@ -1,7 +1,6 @@
 # RMS, MAV, ZC, WL, mean/variance, EMG feature sets.
 from scipy.signal import spectrogram
 import numpy as np
-import processing
 
 def rms(data):
     return np.sqrt(np.mean(data**2, axis=1, keepdims=True))
@@ -11,6 +10,10 @@ def integrated_emg(data):
 
 def mav(data):
     return np.mean(np.abs(data), axis=1, keepdims=True)
+
+# takes in collection of arrays
+def averaged_channels(data): 
+    return np.mean(data, axis=0, keepdims=True).T
 
 # need to calculate metrics now
 

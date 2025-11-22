@@ -4,6 +4,8 @@ import numpy as np
 from app.config import Config
 from app.track import Track
 from app.data_receiver import DataReceiverThread
+from app.processing import filters, features, transforms
+from app.processing.pipeline import get_pipeline
 
 
 class ChannelSelectorDialog(QtWidgets.QDialog):
@@ -125,11 +127,14 @@ class SoundtrackWindow(QtWidgets.QWidget):
 
         self.main_layout.addWidget(menu)
 
-        # Content area: left = plots (scroll area), right = controls
-        content = QtWidgets.QWidget()
-        content_layout = QtWidgets.QHBoxLayout(content)
+        # -------- Tabs for different views --------
+        self.tabs = QtWidgets.QTabWidget()
 
-        # -------- Scroll Area for Tracks (plots) --------
+        # Tab 1: All Tracks
+        all_tracks_content = QtWidgets.QWidget()
+        all_tracks_layout = QtWidgets.QHBoxLayout(all_tracks_content)
+
+        # Scroll Area for all Tracks (plots)
         self.scroll_area = QtWidgets.QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
@@ -139,9 +144,9 @@ class SoundtrackWindow(QtWidgets.QWidget):
         self.scroll_layout = QtWidgets.QVBoxLayout(self.scroll_widget)
 
         self.scroll_area.setWidget(self.scroll_widget)
-        content_layout.addWidget(self.scroll_area, stretch=3)
+        all_tracks_layout.addWidget(self.scroll_area, stretch=3)
 
-        # -------- Right-side control panel --------
+        # Right-side control panel
         self.control_panel = QtWidgets.QWidget()
         ctrl_layout = QtWidgets.QVBoxLayout(self.control_panel)
 
@@ -157,16 +162,45 @@ class SoundtrackWindow(QtWidgets.QWidget):
         ctrl_layout.addWidget(self.select_tracks_button)
         ctrl_layout.addStretch()
 
-        # Add control panel to the content area
-        content_layout.addWidget(self.control_panel, stretch=0)
+        all_tracks_layout.addWidget(self.control_panel, stretch=0)
+        self.tabs.addTab(all_tracks_content, "All Tracks")
 
-        # Add the content area to the main layout
-        self.main_layout.addWidget(content)
+        # Tab 2: HDsEMG Only
+        hdsemg_content = QtWidgets.QWidget()
+        hdsemg_layout = QtWidgets.QVBoxLayout(hdsemg_content)
+
+        # Controls for HDsEMG tab (channel selector)
+        hd_controls = QtWidgets.QWidget()
+        hd_ctrl_layout = QtWidgets.QHBoxLayout(hd_controls)
+        # button to select channels to include in the averaged plot
+        self.hd_average_select_button = QtWidgets.QPushButton("Select Avg Channels")
+        hd_ctrl_layout.addWidget(self.hd_average_select_button)
+        hd_ctrl_layout.addStretch()
+        hdsemg_layout.addWidget(hd_controls)
+
+        self.hdsemg_scroll_area = QtWidgets.QScrollArea()
+        self.hdsemg_scroll_area.setWidgetResizable(True)
+        self.hdsemg_scroll_area.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
+        self.hdsemg_scroll_area.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+
+        self.hdsemg_scroll_widget = QtWidgets.QWidget()
+        self.hdsemg_scroll_layout = QtWidgets.QVBoxLayout(self.hdsemg_scroll_widget)
+
+        self.hdsemg_scroll_area.setWidget(self.hdsemg_scroll_widget)
+        hdsemg_layout.addWidget(self.hdsemg_scroll_area)
+        self.tabs.addTab(hdsemg_content, "HDsEMG")
+
+        self.main_layout.addWidget(self.tabs)
 
         self.init_tracks()
 
+        # Tab 3: Features tab
+        
+
         # wire the select channels button to the main HDsEMG track (first track)
         self.select_channels_button.clicked.connect(self.open_channel_selector)
+        # wire average channels selector
+        self.hd_average_select_button.clicked.connect(self.open_hd_average_selector)
         # wire the select tracks button to toggle visibility of whole tracks
         self.select_tracks_button.clicked.connect(self.open_track_selector)
 
@@ -176,12 +210,19 @@ class SoundtrackWindow(QtWidgets.QWidget):
         self.receiver_thread = None
         #self.receiver_thread = DataReceiverThread(self.device, self.client_socket, self.tracks)
 
-        ''' Processor stages here
-        self.receiver_thread.processor.add_stage(lambda d: d * 0.001)
-        self.receiver_thread.processor.add_stage(filters.butter_bandpass_lowpass)
-        self.receiver_thread.processor.add_stage(features.rms)
-        self.receiver_thread.processor.add_stage(transforms.fft_transform)
-        '''
+        # Processor stages here (Option 3 - named pipelines)
+        # Preconfigure named pipelines BEFORE creating/starting the receiver.
+        # These pipelines are independent; you can add stages to e.g. 'filtered',
+        # 'rectified', 'fft', and 'final' and DataReceiverThread will compute
+        # each branch and emit intermediate outputs.
+        get_pipeline('fft').add_stage(transforms.fft_transform)
+        get_pipeline('filtered').add_stage(filters.butter_bandpass)
+        get_pipeline('filtered').add_stage(filters.notch)
+        get_pipeline('rectified').add_stage(filters.rectify)
+        # features (e.g. rms) should be applied on the appropriate pipeline when
+        # you want a reduced output; by default do not add `features.rms` to
+        # 'final' because it changes array shape expected by tracks.
+        # Example (optional): get_pipeline('features').add_stage(features.rms)
 
         #self.receiver_thread.status_update.connect(self.update_status)
         #self.receiver_thread.start()
@@ -206,6 +247,11 @@ class SoundtrackWindow(QtWidgets.QWidget):
 
         # store containers so we can show/hide whole tracks later
         self.track_containers = []
+        self.hdsemg_track = None
+        # lists for per-channel tracks (on HDsEMG tab)
+        self.hd_channel_tracks = []
+        self.hd_channel_containers = []
+
         for title, n, idx, offset, conv in track_info:
             track_container = QtWidgets.QWidget()
             layout = QtWidgets.QVBoxLayout(track_container)
@@ -218,7 +264,22 @@ class SoundtrackWindow(QtWidgets.QWidget):
             self.scroll_layout.addWidget(track_container)
             self.track_containers.append((title, track_container))
 
+            # Store reference to HDsEMG main track and create per-channel tracks
+            if "HDsEMG" in title:
+                self.hdsemg_track = track
+                # create averaged-track container (shows the mean across selected channels)
+                self.hd_average_channels = list(range(n))
+                self.hd_average_track = Track("HD Average", self.device.frequency, 1, 0, conv, self.plot_time)
+                self.hd_average_track.plot_widget.setMinimumHeight(300)
+                hd_avg_container = QtWidgets.QWidget()
+                hd_avg_layout = QtWidgets.QVBoxLayout(hd_avg_container)
+                hd_avg_layout.addWidget(self.hd_average_track.plot_widget)
+                # add average plot (only) to HDsEMG tab
+                self.hdsemg_scroll_layout.addWidget(hd_avg_container)
+
         self.scroll_layout.addStretch()
+        # ensure hdsemg layout also gets a stretch
+        self.hdsemg_scroll_layout.addStretch()
 
     def change_plot_time(self, text):
         if text.endswith("ms"):
@@ -238,6 +299,18 @@ class SoundtrackWindow(QtWidgets.QWidget):
             track.time_array = np.linspace(0, new_time, new_buf.shape[1])
             track.plot_widget.setXRange(0, new_time)
 
+        # also resize per-channel HDsEMG tracks if present
+        if hasattr(self, 'hd_channel_tracks') and self.hd_channel_tracks:
+            for ch_track in self.hd_channel_tracks:
+                new_buf = np.zeros((ch_track.num_channels, int(new_time * ch_track.frequency)))
+                copy = min(new_buf.shape[1], ch_track.buffer.shape[1])
+                new_buf[:, -copy:] = ch_track.buffer[:, -copy:]
+                ch_track.plot_time = new_time
+                ch_track.buffer = new_buf
+                ch_track.buffer_index = min(ch_track.buffer_index, new_buf.shape[1])
+                ch_track.time_array = np.linspace(0, new_time, new_buf.shape[1])
+                ch_track.plot_widget.setXRange(0, new_time)
+
     def toggle_pause(self, checked):
         self.is_paused = checked
         self.pause_button.setText("Resume" if checked else "Pause")
@@ -248,11 +321,46 @@ class SoundtrackWindow(QtWidgets.QWidget):
 
     def update_status(self, msg):
         self.status_label.setText(msg)
-
+    
+    # access track data here
     def update_plot(self):
         if not self.is_paused:
             for track in self.tracks:
                 track.draw()
+            # update per-channel HDsEMG tracks from the main HDsEMG buffer and draw them
+            if hasattr(self, 'hd_channel_tracks') and self.hd_channel_tracks and self.hdsemg_track is not None:
+                for idx, ch_track in enumerate(self.hd_channel_tracks):
+                    try:
+                        # copy the corresponding row from main HDsEMG buffer into the 1-channel track
+                        if idx < self.hdsemg_track.buffer.shape[0]:
+                            ch_track.buffer[0, :] = self.hdsemg_track.buffer[idx, :]
+                            ch_track.buffer_index = self.hdsemg_track.buffer_index
+                            ch_track.time_array = self.hdsemg_track.time_array
+                    except Exception:
+                        pass
+                    ch_track.draw()
+
+            # update average plot (if present)
+            try:
+                if getattr(self, 'hd_average_track', None) is not None and getattr(self, 'hd_average_channels', None) is not None and self.hdsemg_track is not None:
+                    buf = self.hdsemg_track.buffer
+                    # guard indices
+                    sel = [i for i in self.hd_average_channels if 0 <= i < buf.shape[0]]
+                    if sel:
+                        avg = np.mean(buf[sel, :], axis=0)
+                        # copy into average track buffer
+                        if self.hd_average_track.buffer.shape[1] == avg.shape[0]:
+                            self.hd_average_track.buffer[0, :] = avg
+                        else:
+                            # resize if needed (shouldn't normally happen)
+                            new_buf = np.zeros((1, avg.shape[0]))
+                            new_buf[0, -avg.shape[0]:] = avg
+                            self.hd_average_track.buffer = new_buf
+                        self.hd_average_track.buffer_index = self.hdsemg_track.buffer_index
+                        self.hd_average_track.time_array = self.hdsemg_track.time_array
+                    self.hd_average_track.draw()
+            except Exception:
+                pass
 
     def closeEvent(self, event):
         if self.receiver_thread is not None:
@@ -318,5 +426,30 @@ class SoundtrackWindow(QtWidgets.QWidget):
             # show/hide containers based on selection
             for title, widget in self.track_containers:
                 widget.setVisible(title in sel)
+
+    def open_hd_channel_selector(self):
+        # open dialog to control visibility of individual HD channels on the HDsEMG tab
+        if not hasattr(self, 'hd_channel_containers') or not self.hd_channel_containers:
+            return
+        num = len(self.hd_channel_containers)
+        current = [i for i, (_, w) in enumerate(self.hd_channel_containers) if w.isVisible()]
+        dlg = ChannelSelectorDialog(self, num, selected=current)
+        if dlg.exec_() == QtWidgets.QDialog.Accepted:
+            sel = dlg.selected_indices()
+            sel_set = set(sel)
+            for i, (_, widget) in enumerate(self.hd_channel_containers):
+                widget.setVisible(i in sel_set)
+
+    def open_hd_average_selector(self):
+        # open dialog to choose channels to include in the averaged plot
+        if not hasattr(self, 'hdsemg_track') or self.hdsemg_track is None:
+            return
+        num = self.hdsemg_track.num_channels
+        current = getattr(self, 'hd_average_channels', list(range(num)))
+        dlg = ChannelSelectorDialog(self, num, selected=current)
+        if dlg.exec_() == QtWidgets.QDialog.Accepted:
+            sel = dlg.selected_indices()
+            # store zero-based indices
+            self.hd_average_channels = sorted(sel)
 
 

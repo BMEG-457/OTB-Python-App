@@ -17,40 +17,51 @@ def main():
     window = SoundtrackWindow(device)
     window.show()
 
-    # Start/Stop handlers will be wired to the window's buttons
-    def handle_start():
+    # Toggle streaming handler
+    def handle_stream_toggle():
         try:
-            device.create_command(FSAMP=0, NCH=0, MODE=0,
-                                    HRES=0, HPF=0, EXTEN=0,
-                                    TRIG=0, REC=0, GO=0)
+            # Check if we need to initialize the device connection first
+            if window.receiver_thread is None:
+                device.create_command(FSAMP=0, NCH=0, MODE=0,
+                                        HRES=0, HPF=0, EXTEN=0,
+                                        TRIG=0, REC=0, GO=0)
+                device.start_server()   # <-- Connect here
+                window.set_client_socket(device.client_socket)
+                window.initialize_receiver()
 
-            device.start_server()   # <-- Connect here
+            # Toggle streaming state
+            if not window.is_streaming:
+                window.start_streaming()
+            else:
+                window.stop_streaming()
 
-            window.set_client_socket(device.client_socket)
-            window.initialize_receiver()
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(None, "Connection Error", str(e))
+    
+    # Toggle recording handler
+    def handle_record_toggle():
+        try:
+            # Check if we need to initialize the device connection first
+            if window.receiver_thread is None:
+                device.create_command(FSAMP=0, NCH=0, MODE=0,
+                                        HRES=0, HPF=0, EXTEN=0,
+                                        TRIG=0, REC=0, GO=0)
+                device.start_server()   # <-- Connect here
+                window.set_client_socket(device.client_socket)
+                window.initialize_receiver()
 
-            window.start_recording()
-            # toggle buttons
-            try:
-                window.start_button.setEnabled(False)
-                window.stop_button.setEnabled(True)
-            except Exception:
-                pass
+            # Toggle recording state
+            if not window.is_recording:
+                window.start_recording()
+            else:
+                window.stop_recording()
 
         except Exception as e:
             QtWidgets.QMessageBox.critical(None, "Connection Error", str(e))
 
-    def handle_stop():
-        try:
-            window.stop_recording()
-            window.start_button.setEnabled(True)
-            window.stop_button.setEnabled(False)
-        except Exception:
-            pass
-
-    # wire the window's buttons
-    window.start_button.clicked.connect(handle_start)
-    window.stop_button.clicked.connect(handle_stop)
+    # Wire the buttons
+    window.stream_button.clicked.connect(handle_stream_toggle)
+    window.record_button.clicked.connect(handle_record_toggle)
 
     app.exec_()
 

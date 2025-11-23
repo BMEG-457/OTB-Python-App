@@ -1,6 +1,10 @@
 from PyQt5 import QtWidgets, QtCore, QtGui
 import numpy as np
 import pyqtgraph as pg
+import csv
+from datetime import datetime
+import os
+import time
 
 from app.config import Config
 from app.track import Track
@@ -275,6 +279,13 @@ class SoundtrackWindow(QtWidgets.QWidget):
         self.threshold = None      # Will be numpy array of per-channel thresholds (baseline + 3*std)
         self.mvc_rms = None        # Will be numpy array of per-channel MVC (maximum voluntary contraction)
 
+        # Streaming and Recording state
+        self.is_streaming = False
+        self.is_recording = False
+        self.recording_data = []  # List of (timestamp, channel_data) tuples
+        self.recording_start_time = None
+        self.max_recording_samples = 1000000  # Limit to prevent overflow (~1M samples)
+
         self.setWindowTitle("Sessantaquattro+ Viewer")
         self.setGeometry(100, 100, *Config.WINDOW_SIZE)
 
@@ -327,16 +338,15 @@ class SoundtrackWindow(QtWidgets.QWidget):
         ctrl_layout = QtWidgets.QVBoxLayout(self.control_panel)
 
         self.calibrate_button = QtWidgets.QPushButton("Calibrate")
-        self.start_button = QtWidgets.QPushButton("Start Recording")
-        self.stop_button = QtWidgets.QPushButton("Stop Recording")
-        self.stop_button.setEnabled(False)
-        self.start_button.setEnabled(False)  # Disabled until calibration
+        self.stream_button = QtWidgets.QPushButton("Start Live Stream")
+        self.record_button = QtWidgets.QPushButton("Start Recording")
+        self.record_button.setEnabled(False)  # Disabled until calibration
         self.select_channels_button = QtWidgets.QPushButton("Select Channels")
         self.select_tracks_button = QtWidgets.QPushButton("Select Tracks")
 
         ctrl_layout.addWidget(self.calibrate_button)
-        ctrl_layout.addWidget(self.start_button)
-        ctrl_layout.addWidget(self.stop_button)
+        ctrl_layout.addWidget(self.stream_button)
+        ctrl_layout.addWidget(self.record_button)
         ctrl_layout.addWidget(self.select_channels_button)
         ctrl_layout.addWidget(self.select_tracks_button)
         ctrl_layout.addStretch()
@@ -623,6 +633,93 @@ class SoundtrackWindow(QtWidgets.QWidget):
         except Exception as e:
             pass  # Silent fail to avoid disrupting main update loop
     
+    def on_data_for_recording(self, stage_name, data):
+        """Capture data from the receiver thread for recording."""
+        # Only record 'final' stage data (the processed data that goes to tracks)
+        if stage_name != 'final' or not self.is_recording:
+            return
+        
+        try:
+            # Check for overflow protection
+            if len(self.recording_data) >= self.max_recording_samples:
+                # Stop recording and warn user
+                QtCore.QMetaObject.invokeMethod(self, "stop_recording_overflow",
+                                               QtCore.Qt.QueuedConnection)
+                return
+            
+            # data shape: (channels, samples)
+            # Store each sample with timestamp
+            num_samples = data.shape[1]
+            current_time = time.time()
+            
+            for sample_idx in range(num_samples):
+                # Calculate relative timestamp (seconds since recording start)
+                timestamp = current_time - self.recording_start_time
+                
+                # Get all channels for this sample
+                sample_data = data[:, sample_idx].copy()
+                
+                # Store as tuple: (timestamp, channel_data_array)
+                self.recording_data.append((timestamp, sample_data))
+                
+                # Re-check overflow for each sample
+                if len(self.recording_data) >= self.max_recording_samples:
+                    QtCore.QMetaObject.invokeMethod(self, "stop_recording_overflow",
+                                                   QtCore.Qt.QueuedConnection)
+                    break
+                    
+        except Exception as e:
+            print(f"Error collecting recording data: {e}")
+    
+    @QtCore.pyqtSlot()
+    def stop_recording_overflow(self):
+        """Stop recording due to overflow (called from receiver thread)."""
+        QtWidgets.QMessageBox.warning(self, "Recording Limit Reached",
+                                    f"Maximum recording length ({self.max_recording_samples} samples) reached. "
+                                    "Recording stopped automatically.")
+        self.stop_recording()
+    
+    def save_recording_to_csv(self):
+        """Save recorded data to CSV file."""
+        if not self.recording_data:
+            return
+        
+        try:
+            # Create recordings directory if it doesn't exist
+            recordings_dir = "recordings"
+            if not os.path.exists(recordings_dir):
+                os.makedirs(recordings_dir)
+            
+            # Generate filename with timestamp
+            timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = os.path.join(recordings_dir, f"recording_{timestamp_str}.csv")
+            
+            # Determine number of channels from first sample
+            num_channels = len(self.recording_data[0][1])
+            
+            # Write CSV file
+            with open(filename, 'w', newline='') as csvfile:
+                writer = csv.writer(csvfile)
+                
+                # Write header: Timestamp, Channel_1, Channel_2, ..., Channel_N
+                header = ['Timestamp'] + [f'Channel_{i+1}' for i in range(num_channels)]
+                writer.writerow(header)
+                
+                # Write data rows
+                for timestamp, channel_data in self.recording_data:
+                    row = [timestamp] + channel_data.tolist()
+                    writer.writerow(row)
+            
+            num_samples = len(self.recording_data)
+            self.status_label.setText(f"Recording saved: {filename} ({num_samples} samples)")
+            print(f"Recording saved: {filename} with {num_samples} samples")
+            
+        except Exception as e:
+            error_msg = f"Error saving recording: {e}"
+            self.status_label.setText(error_msg)
+            print(error_msg)
+            QtWidgets.QMessageBox.critical(self, "Save Error", error_msg)
+    
     # access track data here
     def update_plot(self):
         if not self.is_paused:
@@ -680,21 +777,74 @@ class SoundtrackWindow(QtWidgets.QWidget):
                 pass
         event.accept()
 
+    def start_streaming(self):
+        """Start live streaming without recording."""
+        self.is_streaming = True
+        self.is_paused = False
+        self.timer.start()
+        self.receiver_thread.running = True
+        self.status_label.setText("Streaming...")
+        
+        # Change button to "Stop Live Stream"
+        self.stream_button.setText("Stop Live Stream")
+        print("Live streaming started")
+    
+    def stop_streaming(self):
+        """Stop live streaming."""
+        self.is_streaming = False
+        self.is_paused = True
+        self.timer.stop()
+        self.receiver_thread.running = False
+        self.status_label.setText("Stream stopped")
+        
+        # Change button back to "Start Live Stream"
+        self.stream_button.setText("Start Live Stream")
+        print("Live streaming stopped")
+    
     def start_recording(self):
         if not self.is_calibrated:
             QtWidgets.QMessageBox.warning(self, "Not Calibrated",
                                          "Please complete calibration before starting recording.")
             return
+        
+        # Clear previous recording data to prevent overflow
+        self.recording_data = []
+        self.recording_start_time = time.time()
+        self.is_recording = True
+        self.is_streaming = True  # Recording also enables streaming
+        
         print("Recording started")
         self.is_paused = False
         self.timer.start()
         self.receiver_thread.running = True
+        self.status_label.setText("Recording...")
+        
+        # Change button to "Stop Recording"
+        self.record_button.setText("Stop Recording")
 
     def stop_recording(self):
         print("Recording stopped")
-        self.is_paused = True
-        self.timer.stop()
-        self.receiver_thread.running = False
+        self.is_recording = False
+        
+        # Save recording data to CSV
+        if self.recording_data:
+            self.save_recording_to_csv()
+        else:
+            self.status_label.setText("No data recorded")
+        
+        # Clear recording data to free memory
+        self.recording_data = []
+        self.recording_start_time = None
+        
+        # Change button back to "Start Recording"
+        self.record_button.setText("Start Recording")
+        
+        # Keep streaming unless user explicitly stops it
+        # If not already in pure streaming mode, continue streaming
+        if not self.is_streaming:
+            self.is_paused = True
+            self.timer.stop()
+            self.receiver_thread.running = False
 
     def set_client_socket(self, socket):
         self.client_socket = socket
@@ -706,6 +856,7 @@ class SoundtrackWindow(QtWidgets.QWidget):
             self.tracks
         )
         self.receiver_thread.status_update.connect(self.update_status)
+        self.receiver_thread.stage_output.connect(self.on_data_for_recording)
         self.receiver_thread.start()
 
     def open_channel_selector(self):
@@ -777,7 +928,7 @@ class SoundtrackWindow(QtWidgets.QWidget):
         self.threshold = threshold
         self.mvc_rms = mvc_rms
         self.is_calibrated = True
-        self.start_button.setEnabled(True)
+        self.record_button.setEnabled(True)
         
         # Display summary statistics
         mean_baseline = np.mean(baseline_rms)

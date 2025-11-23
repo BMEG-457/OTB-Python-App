@@ -1,5 +1,6 @@
-from PyQt5 import QtWidgets, QtCore
+from PyQt5 import QtWidgets, QtCore, QtGui
 import numpy as np
+import pyqtgraph as pg
 
 from app.config import Config
 from app.track import Track
@@ -9,29 +10,40 @@ from app.processing.pipeline import get_pipeline
 
 
 class CalibrationDialog(QtWidgets.QDialog):
-    """Modal dialog that collects RMS data during a timed calibration window."""
-    calibration_complete = QtCore.pyqtSignal(float, float)  # emits (baseline_rms, threshold)
+    """Modal dialog that collects RMS data during rest and contraction phases."""
+    calibration_complete = QtCore.pyqtSignal(object, object, object)  # emits (baseline_rms, threshold, mvc_rms) as numpy arrays
     
-    def __init__(self, parent, receiver_thread, calibration_duration=3):
+    def __init__(self, parent, receiver_thread, rest_duration=3, contraction_duration=3):
         super().__init__(parent)
         self.setWindowTitle("EMG Calibration")
         self.setModal(True)
-        self.setGeometry(200, 200, 400, 200)
+        self.setGeometry(200, 200, 400, 250)
         
         self.receiver_thread = receiver_thread
-        self.calibration_duration = calibration_duration
-        self.rms_values = []
-        self.remaining_time = calibration_duration
+        self.rest_duration = rest_duration
+        self.contraction_duration = contraction_duration
+        
+        # Data collection
+        self.rest_rms_values = []
+        self.contraction_rms_values = []
+        self.remaining_time = 0
+        self.current_phase = None  # 'rest' or 'contraction'
         
         layout = QtWidgets.QVBoxLayout(self)
         
+        # Phase label
+        self.phase_label = QtWidgets.QLabel("Phase: Waiting")
+        self.phase_label.setStyleSheet("font-size: 16px; font-weight: bold;")
+        layout.addWidget(self.phase_label)
+        
         # Instructions
-        instruction_label = QtWidgets.QLabel("Contract your muscle during countdown")
-        instruction_label.setStyleSheet("font-size: 14px; font-weight: bold;")
-        layout.addWidget(instruction_label)
+        self.instruction_label = QtWidgets.QLabel("Click Start to begin calibration")
+        self.instruction_label.setStyleSheet("font-size: 14px;")
+        self.instruction_label.setWordWrap(True)
+        layout.addWidget(self.instruction_label)
         
         # Countdown timer display
-        self.timer_label = QtWidgets.QLabel(f"{self.calibration_duration}s")
+        self.timer_label = QtWidgets.QLabel("--")
         self.timer_label.setStyleSheet("font-size: 32px; text-align: center; color: red;")
         self.timer_label.setAlignment(QtCore.Qt.AlignCenter)
         layout.addWidget(self.timer_label)
@@ -60,16 +72,40 @@ class CalibrationDialog(QtWidgets.QDialog):
         self.subscription_connected = False
 
     def start_calibration(self):
-        """Start the calibration countdown and begin collecting RMS data."""
-        self.rms_values = []
-        self.remaining_time = self.calibration_duration
+        """Start the calibration with rest phase."""
+        self.rest_rms_values = []
+        self.contraction_rms_values = []
         self.start_button.setEnabled(False)
-        self.status_label.setText("Collecting data...")
         
         # Connect to rectified signal to collect RMS during window
         if not self.subscription_connected and self.receiver_thread is not None:
             self.receiver_thread.stage_output.connect(self.on_stage_output)
             self.subscription_connected = True
+        
+        # Start rest phase
+        self.start_rest_phase()
+    
+    def start_rest_phase(self):
+        """Begin the rest phase (no contraction)."""
+        self.current_phase = 'rest'
+        self.remaining_time = self.rest_duration
+        self.phase_label.setText("Phase 1: REST")
+        self.phase_label.setStyleSheet("font-size: 16px; font-weight: bold; color: blue;")
+        self.instruction_label.setText("Relax your muscles - stay still and relaxed")
+        self.status_label.setText("Collecting rest baseline data...")
+        
+        # Start countdown
+        self.countdown_timer.start(1000)  # Update every 1 second
+        self.tick_countdown()  # Immediate first tick
+    
+    def start_contraction_phase(self):
+        """Begin the contraction phase (maximum voluntary contraction)."""
+        self.current_phase = 'contraction'
+        self.remaining_time = self.contraction_duration
+        self.phase_label.setText("Phase 2: CONTRACTION")
+        self.phase_label.setStyleSheet("font-size: 16px; font-weight: bold; color: red;")
+        self.instruction_label.setText("Contract your muscle as hard as you can!")
+        self.status_label.setText("Collecting maximum contraction data...")
         
         # Start countdown
         self.countdown_timer.start(1000)  # Update every 1 second
@@ -78,38 +114,59 @@ class CalibrationDialog(QtWidgets.QDialog):
     def on_stage_output(self, stage_name, data):
         """Collect RMS from rectified signal."""
         if stage_name == 'rectified' and self.countdown_timer.isActive():
-            # Compute RMS across all channels and samples
-            rms_val = np.sqrt(np.mean(data**2))
-            self.rms_values.append(rms_val)
+            # Compute RMS per channel (shape: channels x samples)
+            # data shape is (channels, samples)
+            rms_per_channel = np.sqrt(np.mean(data**2, axis=1))  # RMS across samples for each channel
+            
+            if self.current_phase == 'rest':
+                self.rest_rms_values.append(rms_per_channel)
+            elif self.current_phase == 'contraction':
+                self.contraction_rms_values.append(rms_per_channel)
     
     def tick_countdown(self):
-        """Update countdown display and check if calibration is complete."""
+        """Update countdown display and check if phase is complete."""
         self.timer_label.setText(f"{self.remaining_time}s")
         self.remaining_time -= 1
         
         if self.remaining_time < 0:
-            # Calibration complete
+            # Phase complete
             self.countdown_timer.stop()
-            self.compute_threshold_and_close()
+            
+            if self.current_phase == 'rest':
+                # Move to contraction phase
+                self.start_contraction_phase()
+            elif self.current_phase == 'contraction':
+                # Calibration complete
+                self.compute_threshold_and_close()
     
     def compute_threshold_and_close(self):
-        """Compute baseline RMS and threshold from collected data."""
-        if not self.rms_values:
+        """Compute baseline, threshold, and MVC from collected data."""
+        if not self.rest_rms_values or not self.contraction_rms_values:
             QtWidgets.QMessageBox.warning(self, "Calibration Failed", 
-                                         "No RMS data collected. Please try again.")
+                                         "Insufficient data collected. Please try again.")
             self.start_button.setEnabled(True)
             self.status_label.setText("Ready. Click Start to begin.")
+            self.current_phase = None
             return
         
-        # Calculate baseline and threshold
-        rms_array = np.array(self.rms_values)
-        baseline_rms = np.mean(rms_array)
-        baseline_std = np.std(rms_array)
+        # Calculate rest baseline per channel
+        # rest_array shape: (time_points, channels)
+        rest_array = np.array(self.rest_rms_values)
+        baseline_rms = np.mean(rest_array, axis=0)  # Mean rest RMS for each channel
+        baseline_std = np.std(rest_array, axis=0)   # Std of rest RMS for each channel
         
-        # Threshold = baseline_mean + 2*std (typical for contraction detection)
-        threshold = baseline_rms + 2.0 * baseline_std
+        # Calculate MVC (Maximum Voluntary Contraction) from contraction phase
+        contraction_array = np.array(self.contraction_rms_values)
+        mvc_rms = np.max(contraction_array, axis=0)  # Max contraction RMS for each channel
         
-        self.status_label.setText(f"Calibration complete. Baseline: {baseline_rms:.4f}, Threshold: {threshold:.4f}")
+        # Threshold = baseline_mean + 3*std (based on rest baseline)
+        threshold = baseline_rms + 3.0 * baseline_std
+        
+        # Display summary statistics
+        mean_baseline = np.mean(baseline_rms)
+        mean_threshold = np.mean(threshold)
+        mean_mvc = np.mean(mvc_rms)
+        self.status_label.setText(f"Calibration complete. Baseline: {mean_baseline:.4f}, Threshold: {mean_threshold:.4f}, MVC: {mean_mvc:.4f}")
         
         # Disconnect receiver signal
         if self.subscription_connected:
@@ -117,7 +174,7 @@ class CalibrationDialog(QtWidgets.QDialog):
             self.subscription_connected = False
         
         # Emit calibration values and accept
-        self.calibration_complete.emit(baseline_rms, threshold)
+        self.calibration_complete.emit(baseline_rms, threshold, mvc_rms)
         self.accept()
 
 
@@ -214,8 +271,9 @@ class SoundtrackWindow(QtWidgets.QWidget):
         
         # Calibration state
         self.is_calibrated = False
-        self.baseline_rms = None
-        self.threshold = None
+        self.baseline_rms = None  # Will be numpy array of per-channel rest baselines
+        self.threshold = None      # Will be numpy array of per-channel thresholds (baseline + 3*std)
+        self.mvc_rms = None        # Will be numpy array of per-channel MVC (maximum voluntary contraction)
 
         self.setWindowTitle("Sessantaquattro+ Viewer")
         self.setGeometry(100, 100, *Config.WINDOW_SIZE)
@@ -334,6 +392,47 @@ class SoundtrackWindow(QtWidgets.QWidget):
         feature_layout.addWidget(self.feature_scroll_area)
         self.tabs.addTab(feature_content, "Features") 
         
+        # Tab 4: Heatmap
+        heatmap_content = QtWidgets.QWidget()
+        heatmap_layout = QtWidgets.QVBoxLayout(heatmap_content)
+        
+        # Heatmap view
+        self.heatmap_view = pg.GraphicsLayoutWidget()
+        self.heatmap_plot = self.heatmap_view.addPlot()
+        self.heatmap_plot.setAspectLocked(True)
+        self.heatmap_plot.hideAxis('bottom')
+        self.heatmap_plot.hideAxis('left')
+        self.heatmap_plot.setTitle("HD-EMG Array Heatmap (Normalized to MVC)")
+        
+        # Create 8x8 ImageItem for heatmap
+        self.heatmap_img = pg.ImageItem()
+        self.heatmap_plot.addItem(self.heatmap_img)
+        
+        # Initialize with zeros
+        self.heatmap_data = np.zeros((8, 8))
+        self.heatmap_img.setImage(self.heatmap_data.T, levels=(0, 1))
+        
+        # Set colormap
+        colormap = pg.colormap.get('viridis')
+        self.heatmap_img.setColorMap(colormap)
+        
+        # Add colorbar
+        colorbar = pg.ColorBarItem(values=(0, 1), colorMap=colormap)
+        colorbar.setImageItem(self.heatmap_img)
+        
+        # Add text labels for channel numbers
+        self.heatmap_labels = []
+        for row in range(8):
+            for col in range(8):
+                # Channel number: bottom-left is 1, going up by column
+                channel_num = col * 8 + (7 - row) + 1
+                text = pg.TextItem(str(channel_num), color='w', anchor=(0.5, 0.5))
+                text.setPos(col + 0.5, row + 0.5)
+                self.heatmap_plot.addItem(text)
+                self.heatmap_labels.append(text)
+        
+        heatmap_layout.addWidget(self.heatmap_view)
+        self.tabs.addTab(heatmap_content, "Heatmap")
         
         self.main_layout.addWidget(self.tabs)
 
@@ -486,6 +585,44 @@ class SoundtrackWindow(QtWidgets.QWidget):
     def update_status(self, msg):
         self.status_label.setText(msg)
     
+    def update_heatmap(self):
+        """Update the 8x8 heatmap with current RMS values normalized to MVC."""
+        if not self.is_calibrated or self.mvc_rms is None:
+            return
+        
+        if self.hdsemg_track is None:
+            return
+        
+        try:
+            # Get current buffer data
+            buf = self.hdsemg_track.buffer  # shape: (channels, samples)
+            
+            # Calculate RMS for recent window (last 100ms or so)
+            window_size = min(100, buf.shape[1])
+            recent_data = buf[:, -window_size:]
+            
+            # Compute RMS per channel
+            current_rms = np.sqrt(np.mean(recent_data**2, axis=1))
+            
+            # Normalize to MVC (0 to 1 scale, clamped)
+            # Ensure we have the right number of channels (64 for 8x8)
+            if len(current_rms) >= 64 and len(self.mvc_rms) >= 64:
+                normalized_rms = current_rms[:64] / (self.mvc_rms[:64] + 1e-10)  # Avoid division by zero
+                normalized_rms = np.clip(normalized_rms, 0, 1)
+                
+                # Reshape to 8x8 grid
+                # Channel 1 at bottom-left, incrementing upward by column
+                for col in range(8):
+                    for row in range(8):
+                        channel_idx = col * 8 + (7 - row)  # 0-indexed
+                        if channel_idx < len(normalized_rms):
+                            self.heatmap_data[row, col] = normalized_rms[channel_idx]
+                
+                # Update the image
+                self.heatmap_img.setImage(self.heatmap_data.T, levels=(0, 1))
+        except Exception as e:
+            pass  # Silent fail to avoid disrupting main update loop
+    
     # access track data here
     def update_plot(self):
         if not self.is_paused:
@@ -525,6 +662,9 @@ class SoundtrackWindow(QtWidgets.QWidget):
                     self.hd_average_track.draw()
             except Exception:
                 pass
+            
+            # Update heatmap
+            self.update_heatmap()
 
     def closeEvent(self, event):
         if self.receiver_thread is not None:
@@ -627,18 +767,28 @@ class SoundtrackWindow(QtWidgets.QWidget):
                                          "Data receiver not started. Initialize receiver first.")
             return
         
-        dlg = CalibrationDialog(self, self.receiver_thread, calibration_duration=3)
+        dlg = CalibrationDialog(self, self.receiver_thread, rest_duration=3, contraction_duration=3)
         dlg.calibration_complete.connect(self.on_calibration_complete)
         dlg.exec_()
     
-    def on_calibration_complete(self, baseline_rms, threshold):
+    def on_calibration_complete(self, baseline_rms, threshold, mvc_rms):
         """Handle successful calibration."""
         self.baseline_rms = baseline_rms
         self.threshold = threshold
+        self.mvc_rms = mvc_rms
         self.is_calibrated = True
         self.start_button.setEnabled(True)
+        
+        # Display summary statistics
+        mean_baseline = np.mean(baseline_rms)
+        mean_threshold = np.mean(threshold)
+        mean_mvc = np.mean(mvc_rms)
+        num_channels = len(baseline_rms)
         QtWidgets.QMessageBox.information(self, "Calibration Success",
-                                         f"Baseline RMS: {baseline_rms:.6f}\nThreshold: {threshold:.6f}")
+                                         f"Channels: {num_channels}\n"
+                                         f"Rest Baseline RMS: {mean_baseline:.6f}\n"
+                                         f"Threshold: {mean_threshold:.6f}\n"
+                                         f"MVC (Max Contraction): {mean_mvc:.6f}")
 
 
 

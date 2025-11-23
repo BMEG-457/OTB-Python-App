@@ -8,6 +8,119 @@ from app.processing import filters, features, transforms
 from app.processing.pipeline import get_pipeline
 
 
+class CalibrationDialog(QtWidgets.QDialog):
+    """Modal dialog that collects RMS data during a timed calibration window."""
+    calibration_complete = QtCore.pyqtSignal(float, float)  # emits (baseline_rms, threshold)
+    
+    def __init__(self, parent, receiver_thread, calibration_duration=3):
+        super().__init__(parent)
+        self.setWindowTitle("EMG Calibration")
+        self.setModal(True)
+        self.setGeometry(200, 200, 400, 200)
+        
+        self.receiver_thread = receiver_thread
+        self.calibration_duration = calibration_duration
+        self.rms_values = []
+        self.remaining_time = calibration_duration
+        
+        layout = QtWidgets.QVBoxLayout(self)
+        
+        # Instructions
+        instruction_label = QtWidgets.QLabel("Contract your muscle during countdown")
+        instruction_label.setStyleSheet("font-size: 14px; font-weight: bold;")
+        layout.addWidget(instruction_label)
+        
+        # Countdown timer display
+        self.timer_label = QtWidgets.QLabel(f"{self.calibration_duration}s")
+        self.timer_label.setStyleSheet("font-size: 32px; text-align: center; color: red;")
+        self.timer_label.setAlignment(QtCore.Qt.AlignCenter)
+        layout.addWidget(self.timer_label)
+        
+        # Status label
+        self.status_label = QtWidgets.QLabel("Ready. Click Start to begin.")
+        layout.addWidget(self.status_label)
+        
+        # Buttons
+        button_layout = QtWidgets.QHBoxLayout()
+        self.start_button = QtWidgets.QPushButton("Start")
+        self.cancel_button = QtWidgets.QPushButton("Cancel")
+        button_layout.addWidget(self.start_button)
+        button_layout.addWidget(self.cancel_button)
+        layout.addLayout(button_layout)
+        
+        # Connect buttons
+        self.start_button.clicked.connect(self.start_calibration)
+        self.cancel_button.clicked.connect(self.reject)
+        
+        # Countdown timer
+        self.countdown_timer = QtCore.QTimer()
+        self.countdown_timer.timeout.connect(self.tick_countdown)
+        
+        # Connection to receiver for RMS collection
+        self.subscription_connected = False
+
+    def start_calibration(self):
+        """Start the calibration countdown and begin collecting RMS data."""
+        self.rms_values = []
+        self.remaining_time = self.calibration_duration
+        self.start_button.setEnabled(False)
+        self.status_label.setText("Collecting data...")
+        
+        # Connect to rectified signal to collect RMS during window
+        if not self.subscription_connected and self.receiver_thread is not None:
+            self.receiver_thread.stage_output.connect(self.on_stage_output)
+            self.subscription_connected = True
+        
+        # Start countdown
+        self.countdown_timer.start(1000)  # Update every 1 second
+        self.tick_countdown()  # Immediate first tick
+    
+    def on_stage_output(self, stage_name, data):
+        """Collect RMS from rectified signal."""
+        if stage_name == 'rectified' and self.countdown_timer.isActive():
+            # Compute RMS across all channels and samples
+            rms_val = np.sqrt(np.mean(data**2))
+            self.rms_values.append(rms_val)
+    
+    def tick_countdown(self):
+        """Update countdown display and check if calibration is complete."""
+        self.timer_label.setText(f"{self.remaining_time}s")
+        self.remaining_time -= 1
+        
+        if self.remaining_time < 0:
+            # Calibration complete
+            self.countdown_timer.stop()
+            self.compute_threshold_and_close()
+    
+    def compute_threshold_and_close(self):
+        """Compute baseline RMS and threshold from collected data."""
+        if not self.rms_values:
+            QtWidgets.QMessageBox.warning(self, "Calibration Failed", 
+                                         "No RMS data collected. Please try again.")
+            self.start_button.setEnabled(True)
+            self.status_label.setText("Ready. Click Start to begin.")
+            return
+        
+        # Calculate baseline and threshold
+        rms_array = np.array(self.rms_values)
+        baseline_rms = np.mean(rms_array)
+        baseline_std = np.std(rms_array)
+        
+        # Threshold = baseline_mean + 2*std (typical for contraction detection)
+        threshold = baseline_rms + 2.0 * baseline_std
+        
+        self.status_label.setText(f"Calibration complete. Baseline: {baseline_rms:.4f}, Threshold: {threshold:.4f}")
+        
+        # Disconnect receiver signal
+        if self.subscription_connected:
+            self.receiver_thread.stage_output.disconnect(self.on_stage_output)
+            self.subscription_connected = False
+        
+        # Emit calibration values and accept
+        self.calibration_complete.emit(baseline_rms, threshold)
+        self.accept()
+
+
 class ChannelSelectorDialog(QtWidgets.QDialog):
     def __init__(self, parent, num_channels, selected=None):
         super().__init__(parent)
@@ -98,6 +211,11 @@ class SoundtrackWindow(QtWidgets.QWidget):
         self.tracks = []
         self.plot_time = Config.DEFAULT_PLOT_TIME
         self.is_paused = False
+        
+        # Calibration state
+        self.is_calibrated = False
+        self.baseline_rms = None
+        self.threshold = None
 
         self.setWindowTitle("Sessantaquattro+ Viewer")
         self.setGeometry(100, 100, *Config.WINDOW_SIZE)
@@ -150,12 +268,15 @@ class SoundtrackWindow(QtWidgets.QWidget):
         self.control_panel = QtWidgets.QWidget()
         ctrl_layout = QtWidgets.QVBoxLayout(self.control_panel)
 
+        self.calibrate_button = QtWidgets.QPushButton("Calibrate")
         self.start_button = QtWidgets.QPushButton("Start Recording")
         self.stop_button = QtWidgets.QPushButton("Stop Recording")
         self.stop_button.setEnabled(False)
+        self.start_button.setEnabled(False)  # Disabled until calibration
         self.select_channels_button = QtWidgets.QPushButton("Select Channels")
         self.select_tracks_button = QtWidgets.QPushButton("Select Tracks")
 
+        ctrl_layout.addWidget(self.calibrate_button)
         ctrl_layout.addWidget(self.start_button)
         ctrl_layout.addWidget(self.stop_button)
         ctrl_layout.addWidget(self.select_channels_button)
@@ -190,13 +311,40 @@ class SoundtrackWindow(QtWidgets.QWidget):
         hdsemg_layout.addWidget(self.hdsemg_scroll_area)
         self.tabs.addTab(hdsemg_content, "HDsEMG")
 
+        # Tab 3: Features tab
+        feature_content = QtWidgets.QWidget()
+        feature_layout = QtWidgets.QVBoxLayout(feature_content)
+
+        feature_controls = QtWidgets.QWidget()
+        feature_ctrl_layout = QtWidgets.QHBoxLayout(feature_controls)
+        self.feature_controls_button = QtWidgets.QPushButton("Feature Controls")
+        feature_ctrl_layout.addWidget(self.feature_controls_button)
+        feature_ctrl_layout.addStretch()
+        feature_layout.addWidget(feature_controls)
+
+        self.feature_scroll_area = QtWidgets.QScrollArea()
+        self.feature_scroll_area.setWidgetResizable(True)
+        self.feature_scroll_area.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
+        self.feature_scroll_area.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
+
+        self.feature_scroll_widget = QtWidgets.QWidget()
+        self.feature_scroll_layout = QtWidgets.QVBoxLayout(self.feature_scroll_widget)
+
+        self.feature_scroll_area.setWidget(self.feature_scroll_widget)
+        feature_layout.addWidget(self.feature_scroll_area)
+        self.tabs.addTab(feature_content, "Features") 
+        
+        
         self.main_layout.addWidget(self.tabs)
 
         self.init_tracks()
 
-        # Tab 3: Features tab
         
 
+        
+
+        # wire the calibrate button to open the calibration dialog
+        self.calibrate_button.clicked.connect(self.open_calibration_dialog)
         # wire the select channels button to the main HDsEMG track (first track)
         self.select_channels_button.clicked.connect(self.open_channel_selector)
         # wire average channels selector
@@ -250,7 +398,13 @@ class SoundtrackWindow(QtWidgets.QWidget):
         self.hdsemg_track = None
         # lists for per-channel tracks (on HDsEMG tab)
         self.hd_channel_tracks = []
-        self.hd_channel_containers = []
+        self.hd_channel_containers = [] 
+
+
+        # feature tracks
+        self.feature_track = None 
+        self.feature_containers = []
+        self.feature_tracks = []
 
         for title, n, idx, offset, conv in track_info:
             track_container = QtWidgets.QWidget()
@@ -275,8 +429,18 @@ class SoundtrackWindow(QtWidgets.QWidget):
                 hd_avg_layout = QtWidgets.QVBoxLayout(hd_avg_container)
                 hd_avg_layout.addWidget(self.hd_average_track.plot_widget)
                 # add average plot (only) to HDsEMG tab
-                self.hdsemg_scroll_layout.addWidget(hd_avg_container)
+                self.hdsemg_scroll_layout.addWidget(hd_avg_container) 
 
+            if "Features" in title.lower():
+                # add to features tab instead
+                self.feature_scroll_layout.addWidget(track_container) 
+                self.feature_track = Track("Feature", self.device.frequency, 1, 0, conv, self.plot_time)  
+                self.feature_track.plot_widget.setMinimumHeight(300)
+                feature_container = QtWidgets.QWidget()
+                feature_layout = QtWidgets.QVBoxLayout(feature_container)
+                feature_layout.addWidget(self.feature_track.plot_widget)
+                self.feature_scroll_layout.addWidget(feature_container)  
+    
         self.scroll_layout.addStretch()
         # ensure hdsemg layout also gets a stretch
         self.hdsemg_scroll_layout.addStretch()
@@ -377,6 +541,10 @@ class SoundtrackWindow(QtWidgets.QWidget):
         event.accept()
 
     def start_recording(self):
+        if not self.is_calibrated:
+            QtWidgets.QMessageBox.warning(self, "Not Calibrated",
+                                         "Please complete calibration before starting recording.")
+            return
         print("Recording started")
         self.is_paused = False
         self.timer.start()
@@ -451,5 +619,26 @@ class SoundtrackWindow(QtWidgets.QWidget):
             sel = dlg.selected_indices()
             # store zero-based indices
             self.hd_average_channels = sorted(sel)
+
+    def open_calibration_dialog(self):
+        """Open calibration dialog if receiver is running."""
+        if self.receiver_thread is None:
+            QtWidgets.QMessageBox.warning(self, "Not Ready", 
+                                         "Data receiver not started. Initialize receiver first.")
+            return
+        
+        dlg = CalibrationDialog(self, self.receiver_thread, calibration_duration=3)
+        dlg.calibration_complete.connect(self.on_calibration_complete)
+        dlg.exec_()
+    
+    def on_calibration_complete(self, baseline_rms, threshold):
+        """Handle successful calibration."""
+        self.baseline_rms = baseline_rms
+        self.threshold = threshold
+        self.is_calibrated = True
+        self.start_button.setEnabled(True)
+        QtWidgets.QMessageBox.information(self, "Calibration Success",
+                                         f"Baseline RMS: {baseline_rms:.6f}\nThreshold: {threshold:.6f}")
+
 
 

@@ -83,6 +83,7 @@ class SoundtrackWindow(QtWidgets.QWidget):
         self.calibrate_button = QtWidgets.QPushButton("Calibrate")
         self.stream_button = QtWidgets.QPushButton("Start Live Stream")
         self.record_button = QtWidgets.QPushButton("Start Recording")
+        self.stream_button.setEnabled(False)  # Disabled until calibration
         self.record_button.setEnabled(False)  # Disabled until calibration
         
         top_bar_layout.addWidget(self.calibrate_button)
@@ -484,6 +485,7 @@ class SoundtrackWindow(QtWidgets.QWidget):
         self.threshold = threshold
         self.mvc_rms = mvc_rms
         self.is_calibrated = True
+        self.stream_button.setEnabled(True)
         self.record_button.setEnabled(True)
         
         # Display summary

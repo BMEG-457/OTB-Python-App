@@ -1,9 +1,62 @@
-from PyQt5 import QtWidgets
+from PyQt5 import QtWidgets, QtCore
 import pyqtgraph as pg
 
-from app.device import SessantaquattroPlus
-from app.window import SoundtrackWindow
+from app.core.device import SessantaquattroPlus
+from app.ui.windows.main_window import SoundtrackWindow
 # control window not used; using built-in controls in SoundtrackWindow
+
+
+class SelectionWindow(QtWidgets.QWidget):
+    """Initial selection window with mode choices."""
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("OTB-Python-App - Mode Selection")
+        self.setGeometry(300, 300, 400, 300)
+        
+        layout = QtWidgets.QVBoxLayout(self)
+        
+        # Title
+        title = QtWidgets.QLabel("Select Mode")
+        title.setStyleSheet("font-size: 24px; font-weight: bold; margin: 20px;")
+        title.setAlignment(QtCore.Qt.AlignCenter)
+        layout.addWidget(title)
+        
+        # Buttons
+        self.live_data_button = QtWidgets.QPushButton("Live Data Viewing")
+        self.live_data_button.setMinimumHeight(60)
+        self.live_data_button.setStyleSheet("font-size: 16px;")
+        
+        self.data_analysis_button = QtWidgets.QPushButton("Data Analysis")
+        self.data_analysis_button.setMinimumHeight(60)
+        self.data_analysis_button.setStyleSheet("font-size: 16px;")
+        
+        layout.addWidget(self.live_data_button)
+        layout.addWidget(self.data_analysis_button)
+        layout.addStretch()
+
+
+class DataAnalysisWindow(QtWidgets.QWidget):
+    """Placeholder window for data analysis mode."""
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Data Analysis")
+        self.setGeometry(100, 100, 800, 600)
+        
+        layout = QtWidgets.QVBoxLayout(self)
+        
+        # Back button in top left
+        back_layout = QtWidgets.QHBoxLayout()
+        self.back_button = QtWidgets.QPushButton("← Back")
+        self.back_button.setMaximumWidth(100)
+        back_layout.addWidget(self.back_button)
+        back_layout.addStretch()
+        layout.addLayout(back_layout)
+        
+        # Placeholder content
+        label = QtWidgets.QLabel("Data Analysis Mode\n\n(To be implemented)")
+        label.setStyleSheet("font-size: 18px;")
+        label.setAlignment(QtCore.Qt.AlignCenter)
+        layout.addWidget(label)
 
 
 def main():
@@ -13,27 +66,31 @@ def main():
     # Create device object, but DO NOT connect yet
     device = SessantaquattroPlus()
 
-    # Visualization window (not yet initialized with a socket)
-    window = SoundtrackWindow(device)
-    window.show()
+    # Create windows
+    selection_window = SelectionWindow()
+    data_analysis_window = DataAnalysisWindow()
+    live_data_window = SoundtrackWindow(device)  # Renamed for clarity
+    
+    # Show selection window first
+    selection_window.show()
 
     # Toggle streaming handler
     def handle_stream_toggle():
         try:
             # Check if we need to initialize the device connection first
-            if window.receiver_thread is None:
+            if live_data_window.receiver_thread is None:
                 device.create_command(FSAMP=0, NCH=0, MODE=0,
                                         HRES=0, HPF=0, EXTEN=0,
                                         TRIG=0, REC=0, GO=0)
                 device.start_server()   # <-- Connect here
-                window.set_client_socket(device.client_socket)
-                window.initialize_receiver()
+                live_data_window.set_client_socket(device.client_socket)
+                live_data_window.initialize_receiver()
 
             # Toggle streaming state
-            if not window.is_streaming:
-                window.start_streaming()
+            if not live_data_window.is_streaming:
+                live_data_window.start_streaming()
             else:
-                window.stop_streaming()
+                live_data_window.stop_streaming()
 
         except Exception as e:
             QtWidgets.QMessageBox.critical(None, "Connection Error", str(e))
@@ -42,26 +99,51 @@ def main():
     def handle_record_toggle():
         try:
             # Check if we need to initialize the device connection first
-            if window.receiver_thread is None:
+            if live_data_window.receiver_thread is None:
                 device.create_command(FSAMP=0, NCH=0, MODE=0,
                                         HRES=0, HPF=0, EXTEN=0,
                                         TRIG=0, REC=0, GO=0)
                 device.start_server()   # <-- Connect here
-                window.set_client_socket(device.client_socket)
-                window.initialize_receiver()
+                live_data_window.set_client_socket(device.client_socket)
+                live_data_window.initialize_receiver()
 
             # Toggle recording state
-            if not window.is_recording:
-                window.start_recording()
+            if not live_data_window.is_recording:
+                live_data_window.start_recording()
             else:
-                window.stop_recording()
+                live_data_window.stop_recording()
 
         except Exception as e:
             QtWidgets.QMessageBox.critical(None, "Connection Error", str(e))
 
-    # Wire the buttons
-    window.stream_button.clicked.connect(handle_stream_toggle)
-    window.record_button.clicked.connect(handle_record_toggle)
+    # Wire the live data window buttons
+    live_data_window.stream_button.clicked.connect(handle_stream_toggle)
+    live_data_window.record_button.clicked.connect(handle_record_toggle)
+    
+    # Navigation handlers
+    def show_live_data():
+        selection_window.hide()
+        live_data_window.show()
+    
+    def show_data_analysis():
+        selection_window.hide()
+        data_analysis_window.show()
+    
+    def back_to_selection_from_live():
+        live_data_window.hide()
+        selection_window.show()
+    
+    def back_to_selection_from_analysis():
+        data_analysis_window.hide()
+        selection_window.show()
+    
+    # Wire selection window buttons
+    selection_window.live_data_button.clicked.connect(show_live_data)
+    selection_window.data_analysis_button.clicked.connect(show_data_analysis)
+    
+    # Wire back buttons
+    live_data_window.back_button.clicked.connect(back_to_selection_from_live)
+    data_analysis_window.back_button.clicked.connect(back_to_selection_from_analysis)
 
     app.exec_()
 

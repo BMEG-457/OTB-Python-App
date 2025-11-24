@@ -1,0 +1,5 @@
+class Config:
+    DEFAULT_PLOT_TIME = 1
+    UPDATE_RATE = 16
+    PLOT_HEIGHT = 600
+    WINDOW_SIZE = (1200, 800)

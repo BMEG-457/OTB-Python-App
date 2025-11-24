@@ -17,9 +17,6 @@ def moving_average(data, window_size=5):
 def rectify(data):
     return abs(data)
 
-def remove_dc_offset(data):
-    return data - data.mean()
-
 def envelope(data, fs, cutoff=5.0):
     b, a = butter(4, cutoff/(fs/2), btype="low")
     return filtfilt(b, a, abs(data))

@@ -27,12 +27,13 @@ class RecordingManager(QtCore.QObject):
         self.recording_data = []
         self.recording_start_time = time.time()
         self.is_recording = True
-        print("Recording started")
+        print("[RECORDING] Recording started - waiting for data...")
+        print(f"[RECORDING] is_recording flag set to: {self.is_recording}")
         return True
     
     def stop_recording(self):
         """Stop recording data."""
-        print("Recording stopped")
+        print(f"[RECORDING] Recording stopped - collected {len(self.recording_data)} samples")
         self.is_recording = False
         return True
     
@@ -40,11 +41,19 @@ class RecordingManager(QtCore.QObject):
         """Capture data from the receiver thread for recording.
         
         Args:
-            stage_name: Name of the processing stage (should be 'final')
+            stage_name: Name of the processing stage ('raw', 'filtered', 'rectified', or 'final')
             data: numpy array of shape (channels, samples)
         """
-        # Only record 'final' stage data (the processed data that goes to tracks)
-        if stage_name != 'final' or not self.is_recording:
+        # Debug: Log every call to see if signal is firing
+        if len(self.recording_data) == 0 and self.is_recording:
+            print(f"[RECORDING] on_data_for_recording called: stage={stage_name}, is_recording={self.is_recording}, data.shape={data.shape}")
+        
+        # Record 'raw' stage data (unprocessed, most reliable)
+        # Changed from 'final' because processing pipeline may fail on small packets
+        if stage_name != 'raw':
+            return
+        
+        if not self.is_recording:
             return
         
         try:
@@ -58,6 +67,10 @@ class RecordingManager(QtCore.QObject):
             # Store each sample with timestamp
             num_samples = data.shape[1]
             current_time = time.time()
+            
+            # Log first sample received
+            if len(self.recording_data) == 0:
+                print(f"[RECORDING] First data received! Shape: {data.shape}, samples: {num_samples}")
             
             for sample_idx in range(num_samples):
                 # Calculate relative timestamp (seconds since recording start)

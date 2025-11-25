@@ -1,6 +1,7 @@
 """Streaming controller for managing live data viewing."""
 
 from PyQt5 import QtCore
+from app.core.config import Config
 
 
 class StreamingController(QtCore.QObject):
@@ -18,24 +19,44 @@ class StreamingController(QtCore.QObject):
     
     def start_streaming(self):
         """Start live streaming without recording."""
+        print("[STREAMING] start_streaming() called")
         self.is_streaming = True
         self.is_paused = False
-        self.timer.start()
+        
         if self.receiver_thread is not None:
-            self.receiver_thread.running = True
+            # Start the receiver thread if not already running
+            if not self.receiver_thread.isRunning():
+                print("[STREAMING] Starting receiver thread...")
+                self.receiver_thread.running = True
+                self.receiver_thread.start()  # Actually start the QThread
+                print("[STREAMING] Receiver thread started")
+            else:
+                print("[STREAMING] Receiver thread already running, setting running=True")
+                self.receiver_thread.running = True
+        else:
+            print("[STREAMING] ERROR: receiver_thread is None!")
+            
+        self.timer.start(Config.UPDATE_RATE)  # Start timer with configured update rate
         self.status_update.emit("Streaming...")
-        print("Live streaming started")
+        print(f"[STREAMING] Timer started with {Config.UPDATE_RATE}ms interval")
         return True
     
     def stop_streaming(self):
         """Stop live streaming."""
+        print("[STREAMING] stop_streaming() called")
         self.is_streaming = False
         self.is_paused = True
         self.timer.stop()
+        
         if self.receiver_thread is not None:
+            print("[STREAMING] Stopping receiver thread...")
             self.receiver_thread.running = False
+            # Give thread time to finish current iteration
+            self.receiver_thread.wait(1000)  # Wait up to 1 second
+            print("[STREAMING] Receiver thread stopped")
+        
         self.status_update.emit("Stream stopped")
-        print("Live streaming stopped")
+        print("[STREAMING] Live streaming stopped")
         return True
     
     def toggle_streaming(self):

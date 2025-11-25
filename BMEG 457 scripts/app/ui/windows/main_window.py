@@ -83,8 +83,6 @@ class SoundtrackWindow(QtWidgets.QWidget):
         self.calibrate_button = QtWidgets.QPushButton("Calibrate")
         self.stream_button = QtWidgets.QPushButton("Start Live Stream")
         self.record_button = QtWidgets.QPushButton("Start Recording")
-        self.stream_button.setEnabled(False)  # Disabled until calibration
-        self.record_button.setEnabled(False)  # Disabled until calibration
         
         top_bar_layout.addWidget(self.calibrate_button)
         top_bar_layout.addWidget(self.stream_button)
@@ -247,10 +245,11 @@ class SoundtrackWindow(QtWidgets.QWidget):
 
     def _initialize_managers(self):
         """Initialize manager components."""
-        # Timer for plot updates
+        # Timer for plot updates (started by streaming controller)
         self.timer = QtCore.QTimer()
         self.timer.timeout.connect(self.update_plot)
-        self.timer.start(Config.UPDATE_RATE)
+        # Don't start timer yet - let streaming controller manage it
+        # self.timer.start(Config.UPDATE_RATE)
 
         # Track Manager
         self.track_manager = TrackManager(
@@ -276,19 +275,25 @@ class SoundtrackWindow(QtWidgets.QWidget):
         self.streaming_controller = None
 
     def _connect_signals(self):
-        """Connect all UI signals to handlers."""
-        self.calibrate_button.clicked.connect(self.open_calibration_dialog)
-        self.stream_button.clicked.connect(self.toggle_streaming)
-        self.record_button.clicked.connect(self.toggle_recording)
+        """Connect all UI signals to handlers. Note: calibrate/stream/record buttons are wired in main.py."""
+        # These buttons are wired in main.py to handle device initialization:
+        # - self.calibrate_button
+        # - self.stream_button  
+        # - self.record_button
         self.select_channels_button.clicked.connect(self.open_channel_selector)
         self.select_tracks_button.clicked.connect(self.open_track_selector)
         self.hd_average_select_button.clicked.connect(self.open_hd_average_selector)
 
     def _configure_pipelines(self):
         """Configure processing pipelines."""
+        # FFT pipeline
         get_pipeline('fft').add_stage(transforms.fft_transform)
-        get_pipeline('filtered').add_stage(filters.butter_bandpass)
-        get_pipeline('filtered').add_stage(filters.notch)
+        
+        # Filtered pipeline - use lambda to provide required parameters
+        get_pipeline('filtered').add_stage(lambda data: filters.butter_bandpass(data, low=20, high=450, fs=self.device.frequency))
+        get_pipeline('filtered').add_stage(lambda data: filters.notch(data, freq=60, fs=self.device.frequency))
+        
+        # Rectified pipeline
         get_pipeline('rectified').add_stage(filters.rectify)
 
     def change_plot_time(self, text):
@@ -339,8 +344,10 @@ class SoundtrackWindow(QtWidgets.QWidget):
             pass
 
     def update_plot(self):
-        """Main plot update loop."""
-        if not self.is_paused:
+        """Main plot update loop - draws whenever timer is running."""
+        # Simplified logic: if timer is running, draw plots
+        # Timer is controlled by streaming_controller, so this implicitly respects streaming state
+        if not self.is_paused:  # Only respect manual pause button
             self.track_manager.draw_all_tracks()
             self.track_manager.update_hd_channel_tracks()
             self.track_manager.update_hd_average()
@@ -348,8 +355,10 @@ class SoundtrackWindow(QtWidgets.QWidget):
 
     def toggle_streaming(self):
         """Toggle streaming on/off."""
+        # Streaming controller should already be initialized by button handler in main.py
         if self.streaming_controller is None:
-            self.update_status("Receiver not initialized")
+            self.update_status("ERROR: Streaming controller not initialized. This should not happen.")
+            print("ERROR: streaming_controller is None in toggle_streaming - check main.py button handlers")
             return
         
         if self.streaming_controller.is_streaming:
@@ -361,11 +370,6 @@ class SoundtrackWindow(QtWidgets.QWidget):
 
     def toggle_recording(self):
         """Toggle recording on/off."""
-        if not self.is_calibrated:
-            QtWidgets.QMessageBox.warning(self, "Not Calibrated",
-                                         "Please complete calibration before recording.")
-            return
-        
         if self.recording_manager.is_recording:
             self.stop_recording()
         else:
@@ -373,13 +377,17 @@ class SoundtrackWindow(QtWidgets.QWidget):
 
     def start_recording(self):
         """Start recording data."""
+        print("[MAIN] start_recording() called")
         self.recording_manager.start_recording()
         self.record_button.setText("Stop Recording")
         self.update_status("Recording...")
         
         # Ensure streaming is active
         if not self.streaming_controller.is_streaming:
+            print("[MAIN] Streaming not active, starting it now...")
             self.streaming_controller.start_streaming()
+        else:
+            print(f"[MAIN] Streaming already active (running={self.receiver_thread.running})")
 
     def stop_recording(self):
         """Stop recording and save data."""
@@ -422,7 +430,8 @@ class SoundtrackWindow(QtWidgets.QWidget):
         self.client_socket = socket
 
     def initialize_receiver(self):
-        """Initialize data receiver thread."""
+        """Initialize data receiver thread (but don't start it yet - streaming_controller will do that)."""
+        print(f"[INIT] Creating receiver thread for device with {self.device.nchannels} channels at {self.device.frequency}Hz")
         self.receiver_thread = DataReceiverThread(
             self.device,
             self.client_socket,
@@ -430,11 +439,14 @@ class SoundtrackWindow(QtWidgets.QWidget):
         )
         self.receiver_thread.status_update.connect(self.update_status)
         self.receiver_thread.stage_output.connect(self.recording_manager.on_data_for_recording)
-        self.receiver_thread.start()
+        print("[INIT] stage_output signal connected to recording_manager.on_data_for_recording")
+        # DON'T start thread here - let streaming controller manage it
+        print("[INIT] Receiver thread created but not started yet")
 
         # Initialize streaming controller now that receiver is ready
         self.streaming_controller = StreamingController(self.timer, self.receiver_thread)
         self.streaming_controller.status_update.connect(self.update_status)
+        print("[INIT] Streaming controller initialized")
 
     def open_channel_selector(self):
         """Open channel selector dialog."""
@@ -469,10 +481,10 @@ class SoundtrackWindow(QtWidgets.QWidget):
             self.track_manager.hd_average_channels = sorted(sel)
 
     def open_calibration_dialog(self):
-        """Open calibration dialog."""
+        """Open calibration dialog. This method should be overridden/wrapped in main.py to handle receiver initialization."""
         if self.receiver_thread is None:
             QtWidgets.QMessageBox.warning(self, "Not Ready", 
-                                         "Data receiver not started. Initialize receiver first.")
+                                         "Device not connected. Please connect device first.")
             return
         
         dlg = CalibrationDialog(self, self.receiver_thread, rest_duration=3, contraction_duration=3)
@@ -485,8 +497,6 @@ class SoundtrackWindow(QtWidgets.QWidget):
         self.threshold = threshold
         self.mvc_rms = mvc_rms
         self.is_calibrated = True
-        self.stream_button.setEnabled(True)
-        self.record_button.setEnabled(True)
         
         # Display summary
         mean_baseline = np.mean(baseline_rms)

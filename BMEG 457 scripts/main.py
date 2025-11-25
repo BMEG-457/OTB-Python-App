@@ -79,18 +79,15 @@ def main():
         try:
             # Check if we need to initialize the device connection first
             if live_data_window.receiver_thread is None:
-                device.create_command(FSAMP=0, NCH=0, MODE=0,
+                device.create_command(FSAMP=2, NCH=3, MODE=0,
                                         HRES=0, HPF=0, EXTEN=0,
-                                        TRIG=0, REC=0, GO=0)
+                                        TRIG=0, REC=0, GO=1)
                 device.start_server()   # <-- Connect here
                 live_data_window.set_client_socket(device.client_socket)
                 live_data_window.initialize_receiver()
 
             # Toggle streaming state
-            if not live_data_window.is_streaming:
-                live_data_window.start_streaming()
-            else:
-                live_data_window.stop_streaming()
+            live_data_window.toggle_streaming()
 
         except Exception as e:
             QtWidgets.QMessageBox.critical(None, "Connection Error", str(e))
@@ -100,23 +97,39 @@ def main():
         try:
             # Check if we need to initialize the device connection first
             if live_data_window.receiver_thread is None:
-                device.create_command(FSAMP=0, NCH=0, MODE=0,
+                device.create_command(FSAMP=2, NCH=3, MODE=0,
                                         HRES=0, HPF=0, EXTEN=0,
-                                        TRIG=0, REC=0, GO=0)
+                                        TRIG=0, REC=0, GO=1)
                 device.start_server()   # <-- Connect here
                 live_data_window.set_client_socket(device.client_socket)
                 live_data_window.initialize_receiver()
 
             # Toggle recording state
-            if not live_data_window.is_recording:
-                live_data_window.start_recording()
-            else:
-                live_data_window.stop_recording()
+            live_data_window.toggle_recording()
+
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(None, "Connection Error", str(e))
+    
+    # Calibration handler
+    def handle_calibration():
+        try:
+            # Check if we need to initialize the device connection first
+            if live_data_window.receiver_thread is None:
+                device.create_command(FSAMP=2, NCH=3, MODE=0,
+                                        HRES=0, HPF=0, EXTEN=0,
+                                        TRIG=0, REC=0, GO=1)
+                device.start_server()   # <-- Connect here
+                live_data_window.set_client_socket(device.client_socket)
+                live_data_window.initialize_receiver()
+
+            # Open calibration dialog
+            live_data_window.open_calibration_dialog()
 
         except Exception as e:
             QtWidgets.QMessageBox.critical(None, "Connection Error", str(e))
 
     # Wire the live data window buttons
+    live_data_window.calibrate_button.clicked.connect(handle_calibration)
     live_data_window.stream_button.clicked.connect(handle_stream_toggle)
     live_data_window.record_button.clicked.connect(handle_record_toggle)
     

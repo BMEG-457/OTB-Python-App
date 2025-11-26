@@ -24,17 +24,28 @@ class StreamingController(QtCore.QObject):
         self.is_paused = False
         
         if self.receiver_thread is not None:
-            # Start the receiver thread if not already running
-            if not self.receiver_thread.isRunning():
-                print("[STREAMING] Starting receiver thread...")
+            # Check if thread is running (alive) vs finished (dead)
+            if self.receiver_thread.isRunning():
+                # Thread is alive (might be paused) - just set running=True to resume
+                print("[STREAMING] Receiver thread is alive, resuming (setting running=True)")
                 self.receiver_thread.running = True
-                self.receiver_thread.start()  # Actually start the QThread
-                print("[STREAMING] Receiver thread started")
             else:
-                print("[STREAMING] Receiver thread already running, setting running=True")
+                # Thread has finished - check if it exited due to error or normal stop
+                print("[STREAMING] Receiver thread not running, attempting to start...")
                 self.receiver_thread.running = True
+                try:
+                    self.receiver_thread.start()  # Try to start the QThread
+                    print("[STREAMING] Receiver thread started successfully")
+                except RuntimeError as e:
+                    # Thread already finished and can't be restarted
+                    print(f"[STREAMING] ERROR: Cannot restart finished thread: {e}")
+                    print("[STREAMING] Need to recreate receiver thread (not implemented yet)")
+                    self.status_update.emit("ERROR: Cannot restart. Please restart the application.")
+                    return False
         else:
             print("[STREAMING] ERROR: receiver_thread is None!")
+            self.status_update.emit("ERROR: Receiver not initialized")
+            return False
             
         self.timer.start(Config.UPDATE_RATE)  # Start timer with configured update rate
         self.status_update.emit("Streaming...")
@@ -49,11 +60,11 @@ class StreamingController(QtCore.QObject):
         self.timer.stop()
         
         if self.receiver_thread is not None:
-            print("[STREAMING] Stopping receiver thread...")
+            print("[STREAMING] Pausing receiver thread (setting running=False)...")
             self.receiver_thread.running = False
-            # Give thread time to finish current iteration
-            self.receiver_thread.wait(1000)  # Wait up to 1 second
-            print("[STREAMING] Receiver thread stopped")
+            # Don't wait() for thread to exit - let it stay alive in recv() call
+            # This allows it to be restarted by setting running=True again
+            print("[STREAMING] Receiver thread paused (will remain in socket recv loop)")
         
         self.status_update.emit("Stream stopped")
         print("[STREAMING] Live streaming stopped")

@@ -44,7 +44,9 @@ class DataReceiverThread(QtCore.QThread):
         packet_bytes = None
         first_packet = True
 
-        while self.running:
+        # Keep thread alive indefinitely - only exit on error or explicit stop()
+        thread_alive = True
+        while thread_alive:
             try:
                 # For first packet, receive with large buffer to detect actual size
                 if first_packet:
@@ -60,6 +62,7 @@ class DataReceiverThread(QtCore.QThread):
                 
                 if not data:
                     print("[RECEIVER] Socket closed by remote end")
+                    thread_alive = False
                     break
                 
                 if len(data) != packet_bytes:
@@ -128,13 +131,15 @@ class DataReceiverThread(QtCore.QThread):
                 except Exception as e:
                     print(f"[RECEIVER] ERROR emitting final stage_output: {e}")
 
-                # feed tracks with the `processed` data (same layout as before)
-                idx = 0
-                for track in self.tracks:
-                    track.feed(processed[idx:idx + track.num_channels])
-                    idx += track.num_channels
+                # Only feed tracks and emit signals when streaming is active
+                if self.running:
+                    # feed tracks with the `processed` data (same layout as before)
+                    idx = 0
+                    for track in self.tracks:
+                        track.feed(processed[idx:idx + track.num_channels])
+                        idx += track.num_channels
 
-                self.data_received.emit(processed)
+                    self.data_received.emit(processed)
 
                 self.packet_count += 1
                 if self.packet_count == 1:
@@ -144,21 +149,27 @@ class DataReceiverThread(QtCore.QThread):
                     elapsed = now - self.last_time
                     self.fps = 100 / elapsed if elapsed else 0
                     self.last_time = now
-                    self.status_update.emit(f"Data rate: {self.fps:.1f} packets/s")
-                    print(f"[RECEIVER] Packet #{self.packet_count}: {self.fps:.1f} packets/s")
+                    if self.running:  # Only emit status when streaming
+                        self.status_update.emit(f"Data rate: {self.fps:.1f} packets/s")
+                        print(f"[RECEIVER] Packet #{self.packet_count}: {self.fps:.1f} packets/s")
 
             except TimeoutError:
+                # Socket timeout - this is normal when paused (running=False)
                 if self.running:
-                    print("[RECEIVER] Socket timeout - no data received in 5 seconds")
+                    print("[RECEIVER] Socket timeout while streaming - no data in 5 seconds")
+                # Don't exit - just continue loop
                 continue
             except Exception as e:
-                if self.running:
-                    print(f"[RECEIVER] Error: {type(e).__name__}: {e}")
-                    import traceback
-                    traceback.print_exc()
+                print(f"[RECEIVER] Error: {type(e).__name__}: {e}")
+                import traceback
+                traceback.print_exc()
+                thread_alive = False
                 break
         
         print(f"[RECEIVER] Thread run() exiting - total packets received: {self.packet_count}")
 
     def stop(self):
+        """Completely stop the receiver thread (called on window close)."""
+        print("[RECEIVER] stop() called - thread will exit on next iteration")
         self.running = False
+        # Note: Thread will continue receiving but won't process until socket closes or timeout

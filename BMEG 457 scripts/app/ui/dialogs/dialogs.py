@@ -65,6 +65,86 @@ class CalibrationDialog(QtWidgets.QDialog):
         
         # Connection to receiver for RMS collection
         self.subscription_connected = False
+    
+    def _fix_low_channels_spatial(self, mvc_rms):
+        """Fix unreasonably low channels by averaging neighbors in 8x8 grid.
+        
+        Assumes first 64 channels are arranged in 8x8 grid (HDsEMG channels).
+        Channel mapping: channel_idx = col * 8 + (7 - row)
+        where row, col are in range [0, 7]
+        
+        Args:
+            mvc_rms: numpy array of MVC values per channel
+        
+        Returns:
+            Fixed mvc_rms array with interpolated values for low channels
+        """
+        if len(mvc_rms) < 64:
+            # Not enough channels for 8x8 grid, return as-is
+            return mvc_rms
+        
+        # Only process first 64 channels (8x8 HDsEMG grid)
+        grid_channels = mvc_rms[:64].copy()
+        
+        # Define threshold for "unreasonably low" - use median of all channels
+        median_mvc = np.median(grid_channels)
+        low_threshold = median_mvc * 0.1  # Channels below 10% of median are considered bad
+        
+        print(f"[CALIBRATION] MVC median: {median_mvc:.6f}, low threshold: {low_threshold:.6f}")
+        
+        # Reshape to 8x8 grid for spatial operations
+        # Note: Channel mapping is col * 8 + (7 - row), so we need to reshape carefully
+        grid = np.zeros((8, 8))
+        for col in range(8):
+            for row in range(8):
+                channel_idx = col * 8 + (7 - row)
+                grid[row, col] = grid_channels[channel_idx]
+        
+        # Find and fix low channels
+        low_channels = []
+        for col in range(8):
+            for row in range(8):
+                if grid[row, col] < low_threshold:
+                    channel_idx = col * 8 + (7 - row)
+                    low_channels.append(channel_idx)
+                    
+                    # Get neighbors in 3x3 window (excluding center)
+                    neighbors = []
+                    for dr in [-1, 0, 1]:
+                        for dc in [-1, 0, 1]:
+                            if dr == 0 and dc == 0:
+                                continue  # Skip center
+                            nr, nc = row + dr, col + dc
+                            if 0 <= nr < 8 and 0 <= nc < 8:
+                                neighbor_val = grid[nr, nc]
+                                # Only use neighbors that are above threshold
+                                if neighbor_val >= low_threshold:
+                                    neighbors.append(neighbor_val)
+                    
+                    # Replace with average of valid neighbors
+                    if neighbors:
+                        avg_neighbor = np.mean(neighbors)
+                        grid[row, col] = avg_neighbor
+                        print(f"[CALIBRATION] Fixed channel {channel_idx+1}: {grid_channels[channel_idx]:.6f} -> {avg_neighbor:.6f} (avg of {len(neighbors)} neighbors)")
+                    else:
+                        # No valid neighbors, use median of all channels
+                        grid[row, col] = median_mvc
+                        print(f"[CALIBRATION] Fixed channel {channel_idx+1}: {grid_channels[channel_idx]:.6f} -> {median_mvc:.6f} (no valid neighbors, using median)")
+        
+        if low_channels:
+            print(f"[CALIBRATION] Fixed {len(low_channels)} low channels: {[ch+1 for ch in low_channels]}")
+        else:
+            print("[CALIBRATION] No low channels detected")
+        
+        # Convert grid back to channel array
+        for col in range(8):
+            for row in range(8):
+                channel_idx = col * 8 + (7 - row)
+                grid_channels[channel_idx] = grid[row, col]
+        
+        # Update mvc_rms with fixed values
+        mvc_rms[:64] = grid_channels
+        return mvc_rms
 
     def start_calibration(self):
         """Start the calibration with rest phase."""
@@ -115,8 +195,12 @@ class CalibrationDialog(QtWidgets.QDialog):
             
             if self.current_phase == 'rest':
                 self.rest_rms_values.append(rms_per_channel)
+                if len(self.rest_rms_values) == 1:
+                    print(f"[CALIBRATION] First rest sample collected (shape: {rms_per_channel.shape})")
             elif self.current_phase == 'contraction':
                 self.contraction_rms_values.append(rms_per_channel)
+                if len(self.contraction_rms_values) == 1:
+                    print(f"[CALIBRATION] First contraction sample collected (shape: {rms_per_channel.shape})")
     
     def tick_countdown(self):
         """Update countdown display and check if phase is complete."""
@@ -136,9 +220,20 @@ class CalibrationDialog(QtWidgets.QDialog):
     
     def compute_threshold_and_close(self):
         """Compute baseline, threshold, and MVC from collected data."""
-        if not self.rest_rms_values or not self.contraction_rms_values:
+        # Debug: Show how much data was collected
+        print(f"[CALIBRATION] Rest samples collected: {len(self.rest_rms_values)}")
+        print(f"[CALIBRATION] Contraction samples collected: {len(self.contraction_rms_values)}")
+        
+        # Check if we have any data (adjust minimum required samples here)
+        min_samples_required = 1  # Lower this if you want to allow calibration with less data
+        
+        if len(self.rest_rms_values) < min_samples_required or len(self.contraction_rms_values) < min_samples_required:
             QtWidgets.QMessageBox.warning(self, "Calibration Failed", 
-                                         "Insufficient data collected. Please try again.")
+                                         f"Insufficient data collected.\n"
+                                         f"Rest: {len(self.rest_rms_values)} samples\n"
+                                         f"Contraction: {len(self.contraction_rms_values)} samples\n"
+                                         f"Required: {min_samples_required} samples each\n\n"
+                                         f"Make sure streaming is active before calibration!")
             self.start_button.setEnabled(True)
             self.status_label.setText("Ready. Click Start to begin.")
             self.current_phase = None
@@ -153,6 +248,9 @@ class CalibrationDialog(QtWidgets.QDialog):
         # Calculate MVC (Maximum Voluntary Contraction) from contraction phase
         contraction_array = np.array(self.contraction_rms_values)
         mvc_rms = np.max(contraction_array, axis=0)  # Max contraction RMS for each channel
+        
+        # Fix unreasonably low MVC values by spatial interpolation (8x8 grid)
+        mvc_rms = self._fix_low_channels_spatial(mvc_rms)
         
         # Threshold = baseline_mean + 3*std (based on rest baseline)
         threshold = baseline_rms + 3.0 * baseline_std

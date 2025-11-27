@@ -29,22 +29,44 @@ class SessantaquattroPlus:
             frequencies = {0: 500, 1: 1000, 2: 2000, 3: 4000}
         return frequencies.get(FSAMP, 2000)
 
-    def create_command(self, FSAMP=2, NCH=3, MODE=0, HRES=0, HPF=0, EXTEN=0, TRIG=0, REC=0, GO=1):
+    def create_command(self, FSAMP=2, NCH=3, MODE=0, HRES=0, HPF=1, EXTEN=0, TRIG=0, REC=0, GO=1):
+        """
+        Create command byte for Sessantaquattro+
+        
+        FSAMP: Sampling frequency (0=500Hz, 1=1kHz, 2=2kHz, 3=4kHz)
+        NCH: Number of channels (0=8, 1=16, 2=32, 3=64)
+        MODE: Working mode (0=Monopolar, 1=Bipolar, 2=Differential, etc.)
+        HRES: High resolution (0=16bit, 1=24bit)
+        HPF: High pass filter (0=DC, 1=10.5Hz)
+        EXTEN: Extension factor (not used in standard)
+        TRIG: Trigger mode (0=GO/STOP bit, 1=internal, 2=external, 3=button)
+        REC: Recording on SD (0=stop, 1=rec)
+        GO: Data transfer (0=stop, 1=go) - CRITICAL!
+        """
         self.nchannels = self.get_num_channels(NCH, MODE)
         self.frequency = self.get_sampling_frequency(FSAMP, MODE)
 
         Command = 0
-        Command += GO
-        Command += (REC << 1)
-        Command += (TRIG << 2)
-        Command += (EXTEN << 4)
-        Command += (HPF << 6)
-        Command += (HRES << 7)
-        Command += (MODE << 8)
-        Command += (NCH << 11)
-        Command += (FSAMP << 13)
+        Command = Command + GO           # Bit 0 - MUST BE 1 to start!
+        Command = Command + (REC << 1)   # Bit 1
+        Command = Command + (TRIG << 2)  # Bits 2-3
+        Command = Command + (EXTEN << 4) # Bits 4-5
+        Command = Command + (HPF << 6)   # Bit 6
+        Command = Command + (HRES << 7)  # Bit 7
+        Command = Command + (MODE << 8)  # Bits 8-10
+        Command = Command + (NCH << 11)  # Bits 11-12
+        Command = Command + (FSAMP << 13) # Bits 13-14
 
-        print(format(Command, "016b"))
+        binary_command = format(Command, '016b')
+        print(f"Command Configuration:")
+        print(f"  Channels: {self.nchannels} (NCH={NCH}, MODE={MODE})")
+        print(f"  Frequency: {self.frequency} Hz (FSAMP={FSAMP})")
+        print(f"  Resolution: {'24-bit' if HRES else '16-bit'}")
+        print(f"  HPF: {'ON (10.5Hz)' if HPF else 'OFF (DC)'}")
+        print(f"  GO bit: {GO} {'(STARTED)' if GO else '(STOPPED!)'}")
+        print(f"  Binary: {binary_command}")
+        print(f"  Decimal: {Command}")
+        
         return Command
     
 
@@ -74,7 +96,6 @@ class SessantaquattroPlus:
             print("Please connect to the Sessantaquattroplus device's WiFi network first")
             sys.exit(1)
         
-        command = self.create_command()
         try:
             self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -84,16 +105,14 @@ class SessantaquattroPlus:
             
             self.server_socket.bind((self.host, self.port))
             self.server_socket.listen(1)
-            print(f"Listening on {self.host}:{self.port}...")
-            print(f"Waiting for device connection (timeout: {connection_timeout}s)...")
+            print(f"Server listening on {self.host}:{self.port}...")
+            print(f"Waiting for Sessantaquattro+ to connect...")
             
             try:
                 self.client_socket, addr = self.server_socket.accept()
                 # Remove timeout for ongoing communication
                 self.client_socket.settimeout(None)
-                print(f"Connected to {addr}")
-                
-                self.client_socket.send(command.to_bytes(2, "big", signed=True))
+                print(f"Connection accepted from {addr}")
                 
             except socket.timeout:
                 print(f"ERROR: Device did not connect within {connection_timeout} seconds")
@@ -109,6 +128,15 @@ class SessantaquattroPlus:
             if self.server_socket:
                 self.server_socket.close()
             sys.exit(1)
+            
+    def send_command(self, command):
+        """Send command to start data acquisition"""
+        try:
+            self.client_socket.send(command.to_bytes(2, byteorder='big', signed=True))
+            print(f"Command sent successfully")
+        except Exception as e:
+            print(f"Error sending command: {e}")
+            raise
 
     def stop_server(self):
         if self.client_socket:

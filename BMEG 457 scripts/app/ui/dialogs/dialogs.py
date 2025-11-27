@@ -8,7 +8,7 @@ class CalibrationDialog(QtWidgets.QDialog):
     """Modal dialog that collects RMS data during rest and contraction phases."""
     calibration_complete = QtCore.pyqtSignal(object, object, object)  # emits (baseline_rms, threshold, mvc_rms) as numpy arrays
     
-    def __init__(self, parent, receiver_thread, rest_duration=3, contraction_duration=3):
+    def __init__(self, parent, receiver_thread, rest_duration=5, contraction_duration=5):
         super().__init__(parent)
         self.setWindowTitle("EMG Calibration")
         self.setModal(True)
@@ -187,11 +187,32 @@ class CalibrationDialog(QtWidgets.QDialog):
         self.tick_countdown()  # Immediate first tick
     
     def on_stage_output(self, stage_name, data):
-        """Collect RMS from rectified signal."""
-        if stage_name == 'rectified' and self.countdown_timer.isActive():
+        """Collect RMS from filtered signal."""
+        if stage_name == 'filtered' and self.countdown_timer.isActive():
+            # Filter out saturated values before computing RMS
+            # Saturation indicates hanging/disconnected electrodes
+            saturation_threshold_low = -32760  # Close to -32768 (int16 min)
+            saturation_threshold_high = 32760   # Close to 32767 (int16 max)
+            
+            # Create mask for non-saturated values
+            non_saturated_mask = (data > saturation_threshold_low) & (data < saturation_threshold_high)
+            
             # Compute RMS per channel (shape: channels x samples)
             # data shape is (channels, samples)
-            rms_per_channel = np.sqrt(np.mean(data**2, axis=1))  # RMS across samples for each channel
+            rms_per_channel = np.zeros(data.shape[0])
+            
+            for ch_idx in range(data.shape[0]):
+                channel_data = data[ch_idx]
+                channel_mask = non_saturated_mask[ch_idx]
+                
+                # Only compute RMS from non-saturated samples
+                valid_samples = channel_data[channel_mask]
+                
+                if len(valid_samples) > 0:
+                    rms_per_channel[ch_idx] = np.sqrt(np.mean(valid_samples**2))
+                else:
+                    # All samples saturated - set to 0 (will be handled later)
+                    rms_per_channel[ch_idx] = 0.0
             
             if self.current_phase == 'rest':
                 self.rest_rms_values.append(rms_per_channel)
@@ -247,7 +268,36 @@ class CalibrationDialog(QtWidgets.QDialog):
         
         # Calculate MVC (Maximum Voluntary Contraction) from contraction phase
         contraction_array = np.array(self.contraction_rms_values)
-        mvc_rms = np.max(contraction_array, axis=0)  # Max contraction RMS for each channel
+        
+        # Filter out saturation values (-32768, 32767) before calculating MVC
+        # These values indicate hanging/disconnected electrodes
+        mvc_rms = np.zeros(contraction_array.shape[1])  # One value per channel
+        saturation_threshold_low = -32760  # Close to -32768 (int16 min)
+        saturation_threshold_high = 32760   # Close to 32767 (int16 max)
+        
+        for ch_idx in range(contraction_array.shape[1]):
+            channel_data = contraction_array[:, ch_idx]
+            
+            # Filter out saturated values
+            non_saturated = channel_data[
+                (channel_data > saturation_threshold_low) & 
+                (channel_data < saturation_threshold_high)
+            ]
+            
+            if len(non_saturated) > 0:
+                # Use 99th percentile of non-saturated values as MVC
+                # This is more robust than max and avoids outliers
+                mvc_rms[ch_idx] = np.percentile(non_saturated, 99)
+                
+                # Log if we filtered out saturated values
+                if len(non_saturated) < len(channel_data):
+                    print(f"[CALIBRATION] Channel {ch_idx+1}: Filtered {len(channel_data) - len(non_saturated)} saturated values, "
+                          f"using 99th percentile = {mvc_rms[ch_idx]:.6f}")
+            else:
+                # All values are saturated - this channel is likely disconnected
+                # Use a very small value that will be fixed by spatial interpolation
+                mvc_rms[ch_idx] = 0.0
+                print(f"[CALIBRATION] Channel {ch_idx+1}: ALL VALUES SATURATED - marking for spatial interpolation")
         
         # Fix unreasonably low MVC values by spatial interpolation (8x8 grid)
         mvc_rms = self._fix_low_channels_spatial(mvc_rms)

@@ -23,7 +23,8 @@ class Track:
         self.plot_widget.setAntialiasing(True)
         self.plot_widget.enableAutoRange()
 
-        if "HDsEMG" in title:
+        # Add labels and units
+        if 'HDsEMG' in title or 'channels' in title:
             self.plot_widget.setLabel("left", "Amplitude", units="V")
         else:
             self.plot_widget.setLabel("left", "Amplitude", units="A.U.")
@@ -43,16 +44,16 @@ class Track:
 
     def feed(self, packet):
         packet_size = packet.shape[1]
-        end_space = self.buffer.shape[1] - self.buffer_index
-
-        if packet_size > end_space:
+        # Use buffer management with proper wrap-around
+        if self.buffer_index + packet_size > self.buffer.shape[1]:
+            end_space = self.buffer.shape[1] - self.buffer_index
             if end_space > 0:
                 self.buffer[:, self.buffer_index:] = packet[:, :end_space]
-            self.buffer[:, :packet_size - end_space] = packet[:, end_space:]
+            self.buffer[:, :packet_size-end_space] = packet[:, end_space:]
             self.buffer_index = packet_size - end_space
         else:
             self.buffer[:, self.buffer_index:self.buffer_index + packet_size] = packet
-            self.buffer_index += packet_size
+            self.buffer_index = (self.buffer_index + packet_size) % self.buffer.shape[1]
 
     def draw(self):
         for i, curve in enumerate(self.curves):

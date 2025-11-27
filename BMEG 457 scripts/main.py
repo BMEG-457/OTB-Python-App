@@ -79,10 +79,24 @@ def main():
         try:
             # Check if we need to initialize the device connection first
             if live_data_window.receiver_thread is None:
-                device.create_command(FSAMP=2, NCH=3, MODE=0,
-                                        HRES=0, HPF=0, EXTEN=0,
-                                        TRIG=0, REC=0, GO=1)
+                print("=" * 60)
+                print("Sessantaquattro+ Python Receiver")
+                print("=" * 60)
+                
+                # Create command
+                command = device.create_command(FSAMP=2, NCH=3, MODE=0,
+                                               HRES=0, HPF=1, EXTEN=0,
+                                               TRIG=0, REC=0, GO=1)
+                
+                print("\nStarting TCP server...")
                 device.start_server()   # <-- Connect here
+                
+                print("\nSending start command...")
+                device.send_command(command)
+                
+                print("\nInitializing visualization...")
+                print("=" * 60)
+                
                 live_data_window.set_client_socket(device.client_socket)
                 live_data_window.initialize_receiver()
 
@@ -97,10 +111,24 @@ def main():
         try:
             # Check if we need to initialize the device connection first
             if live_data_window.receiver_thread is None:
-                device.create_command(FSAMP=2, NCH=3, MODE=0,
-                                        HRES=0, HPF=0, EXTEN=0,
-                                        TRIG=0, REC=0, GO=1)
+                print("=" * 60)
+                print("Sessantaquattro+ Python Receiver")
+                print("=" * 60)
+                
+                # Create command
+                command = device.create_command(FSAMP=2, NCH=3, MODE=0,
+                                               HRES=0, HPF=1, EXTEN=0,
+                                               TRIG=0, REC=0, GO=1)
+                
+                print("\nStarting TCP server...")
                 device.start_server()   # <-- Connect here
+                
+                print("\nSending start command...")
+                device.send_command(command)
+                
+                print("\nInitializing visualization...")
+                print("=" * 60)
+                
                 live_data_window.set_client_socket(device.client_socket)
                 live_data_window.initialize_receiver()
 
@@ -115,10 +143,24 @@ def main():
         try:
             # Check if we need to initialize the device connection first
             if live_data_window.receiver_thread is None:
-                device.create_command(FSAMP=2, NCH=3, MODE=0,
-                                        HRES=0, HPF=0, EXTEN=0,
-                                        TRIG=0, REC=0, GO=1)
+                print("=" * 60)
+                print("Sessantaquattro+ Python Receiver")
+                print("=" * 60)
+                
+                # Create command
+                command = device.create_command(FSAMP=2, NCH=3, MODE=0,
+                                               HRES=0, HPF=1, EXTEN=0,
+                                               TRIG=0, REC=0, GO=1)
+                
+                print("\nStarting TCP server...")
                 device.start_server()   # <-- Connect here
+                
+                print("\nSending start command...")
+                device.send_command(command)
+                
+                print("\nInitializing visualization...")
+                print("=" * 60)
+                
                 live_data_window.set_client_socket(device.client_socket)
                 live_data_window.initialize_receiver()
 
@@ -143,6 +185,12 @@ def main():
         data_analysis_window.show()
     
     def back_to_selection_from_live():
+        # Stop streaming if active
+        if live_data_window.streaming_controller and live_data_window.streaming_controller.is_streaming:
+            live_data_window.streaming_controller.stop_streaming()
+        # Stop recording if active
+        if live_data_window.recording_manager.is_recording:
+            live_data_window.stop_recording()
         live_data_window.hide()
         selection_window.show()
     
@@ -158,7 +206,8 @@ def main():
     live_data_window.back_button.clicked.connect(back_to_selection_from_live)
     data_analysis_window.back_button.clicked.connect(back_to_selection_from_analysis)
 
-    app.exec_()
+    import sys
+    sys.exit(app.exec_())
 
 if __name__ == "__main__":
     main()

@@ -40,13 +40,30 @@ class TrackManager:
                 ("Buffer", 1, 70, 1, 1),
                 ("Ramp", 1, 71, 1, 1),
             ]
+        elif self.device.nchannels == 40:  # 64 bio channels in MODE=1
+            track_info = [
+                ('HDsEMG 32 channels', 32, 0, 0.001, 0.000000286),
+                ('AUX 1', 1, 32, 1, 0.00014648),
+                ('AUX 2', 1, 33, 1, 0.00014648),
+                ('Quaternions', 4, 34, 1, 1),
+                ('Buffer', 1, 38, 1, 1),
+                ('Ramp', 1, 39, 1, 1),
+            ]
         else:
-            main = self.device.nchannels - 8
+            # Calculate main channels (total - 8 accessory channels)
+            main = max(4, self.device.nchannels - 8)
             track_info = [
                 (f"HDsEMG {main} channels", main, 0, 0.001, 0.000000286),
                 ("AUX 1", 1, main, 1, 0.00014648),
                 ("AUX 2", 1, main + 1, 1, 0.00014648),
             ]
+            # Only add other channels if we have enough total channels
+            if self.device.nchannels >= main + 8:
+                track_info.extend([
+                    ('Quaternions', 4, main + 2, 1, 1),
+                    ('Buffer', 1, main + 6, 1, 1),
+                    ('Ramp', 1, main + 7, 1, 1),
+                ])
         
         for title, n, idx, offset, conv in track_info:
             track_container = QtWidgets.QWidget()

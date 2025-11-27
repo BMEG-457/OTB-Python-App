@@ -318,6 +318,10 @@ class SoundtrackWindow(QtWidgets.QWidget):
         """Update status label."""
         self.status_label.setText(msg)
     
+    def show_error(self, message):
+        """Display error message dialog."""
+        QtWidgets.QMessageBox.critical(self, "Error", message)
+    
     def update_heatmap(self):
         """Update the 8x8 heatmap with current RMS values normalized to MVC."""
         if not self.is_calibrated or self.mvc_rms is None or self.hdsemg_track is None:
@@ -327,7 +331,26 @@ class SoundtrackWindow(QtWidgets.QWidget):
             buf = self.hdsemg_track.buffer
             window_size = min(100, buf.shape[1])
             recent_data = buf[:, -window_size:]
-            current_rms = np.sqrt(np.mean(recent_data**2, axis=1))
+            
+            # Filter out saturated values before computing RMS
+            saturation_threshold_low = -32760  # Close to -32768 (int16 min)
+            saturation_threshold_high = 32760   # Close to 32767 (int16 max)
+            
+            # Compute RMS per channel with saturation filtering
+            current_rms = np.zeros(recent_data.shape[0])
+            for ch_idx in range(recent_data.shape[0]):
+                channel_data = recent_data[ch_idx]
+                # Filter out saturated values
+                non_saturated = channel_data[
+                    (channel_data > saturation_threshold_low) & 
+                    (channel_data < saturation_threshold_high)
+                ]
+                
+                if len(non_saturated) > 0:
+                    current_rms[ch_idx] = np.sqrt(np.mean(non_saturated**2))
+                else:
+                    # All samples saturated - use 0
+                    current_rms[ch_idx] = 0.0
             
             if len(current_rms) >= 64 and len(self.mvc_rms) >= 64:
                 normalized_rms = current_rms[:64] / (self.mvc_rms[:64] + 1e-10)
@@ -412,17 +435,34 @@ class SoundtrackWindow(QtWidgets.QWidget):
 
     def closeEvent(self, event):
         """Handle window close event."""
+        # Stop streaming and recording
+        if self.streaming_controller and self.streaming_controller.is_streaming:
+            self.streaming_controller.stop_streaming()
+        if self.recording_manager.is_recording:
+            self.stop_recording()
+        
+        # Stop receiver thread
         if self.receiver_thread is not None:
             try:
                 self.receiver_thread.stop()
-                self.receiver_thread.wait()
-            except Exception:
-                pass
+                self.receiver_thread.wait(2000)  # Wait max 2 seconds
+            except Exception as e:
+                print(f"Error stopping receiver thread: {e}")
+        
+        # Close socket
         if self.client_socket is not None:
             try:
                 self.client_socket.close()
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"Error closing socket: {e}")
+        
+        # Stop device server
+        if hasattr(self, 'device') and self.device is not None:
+            try:
+                self.device.stop_server()
+            except Exception as e:
+                print(f"Error stopping device server: {e}")
+        
         event.accept()
 
     def set_client_socket(self, socket):
@@ -438,6 +478,7 @@ class SoundtrackWindow(QtWidgets.QWidget):
             self.tracks
         )
         self.receiver_thread.status_update.connect(self.update_status)
+        self.receiver_thread.error_signal.connect(self.show_error)
         self.receiver_thread.stage_output.connect(self.recording_manager.on_data_for_recording)
         print("[INIT] stage_output signal connected to recording_manager.on_data_for_recording")
         # DON'T start thread here - let streaming controller manage it

@@ -137,5 +137,5 @@ htmlcov/
 *.log
 
 # Optional: Large data caches or local runtime files (uncomment if needed)
-## data/
+data/
 ## recordings/

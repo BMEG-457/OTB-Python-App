@@ -3,6 +3,9 @@
 from PyQt5 import QtWidgets, QtCore
 import numpy as np
 import pyqtgraph as pg
+from datetime import datetime
+import csv
+import os
 
 from app.core.config import Config
 from app.data.data_receiver import DataReceiverThread
@@ -28,6 +31,9 @@ class SoundtrackWindow(QtWidgets.QWidget):
         self.baseline_rms = None
         self.threshold = None
         self.mvc_rms = None
+        
+        # Load previous session data if available
+        self.load_session_data()
 
         self.setWindowTitle("Sessantaquattro+ Viewer")
         self.setGeometry(100, 100, *Config.WINDOW_SIZE)
@@ -273,6 +279,9 @@ class SoundtrackWindow(QtWidgets.QWidget):
 
         # Streaming Controller (will be initialized when receiver is ready)
         self.streaming_controller = None
+        
+        # Verify heatmap readiness after full initialization
+        QtCore.QTimer.singleShot(100, self.verify_heatmap_readiness)  # Delay to ensure all initialization is complete
 
     def _connect_signals(self):
         """Connect all UI signals to handlers. Note: calibrate/stream/record buttons are wired in main.py."""
@@ -549,3 +558,193 @@ class SoundtrackWindow(QtWidgets.QWidget):
                                          f"Rest Baseline RMS: {mean_baseline:.6f}\n"
                                          f"Threshold: {mean_threshold:.6f}\n"
                                          f"MVC (Max Contraction): {mean_mvc:.6f}")
+        
+        # Save session data immediately after successful calibration
+        print("[SESSION] Saving calibration data...")
+        self.save_session_data()
+    
+    def load_session_data(self):
+        """Load configuration and calibrated values from previous session CSV file."""
+        try:
+            # Get path to CSV file
+            data_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'data')
+            csv_path = os.path.join(data_dir, 'previous_session.csv')
+            
+            if not os.path.exists(csv_path):
+                print("[SESSION] No previous session file found")
+                return
+            
+            # Read the CSV file
+            with open(csv_path, 'r', newline='', encoding='utf-8') as csvfile:
+                reader = csv.DictReader(csvfile)
+                session_data = next(reader, None)
+                
+                if session_data is None:
+                    print("[SESSION] No data found in previous session file")
+                    return
+                
+                # Load calibration data if available
+                if session_data.get('is_calibrated', '').lower() == 'true':
+                    try:
+                        # Parse comma-separated values back to numpy arrays
+                        baseline_values = session_data.get('baseline_rms_values', '')
+                        threshold_values = session_data.get('threshold_values', '')
+                        mvc_values = session_data.get('mvc_rms_values', '')
+                        
+                        if baseline_values and threshold_values and mvc_values:
+                            self.baseline_rms = np.array([float(x) for x in baseline_values.split(',') if x.strip()])
+                            self.threshold = np.array([float(x) for x in threshold_values.split(',') if x.strip()])
+                            self.mvc_rms = np.array([float(x) for x in mvc_values.split(',') if x.strip()])
+                            self.is_calibrated = True
+                            
+                            num_channels = len(self.baseline_rms)
+                            mean_baseline = np.mean(self.baseline_rms)
+                            mean_threshold = np.mean(self.threshold)
+                            mean_mvc = np.mean(self.mvc_rms)
+                            
+                            print(f"[SESSION] Loaded previous calibration: {num_channels} channels")
+                            print(f"[SESSION] Baseline: {mean_baseline:.6f}, Threshold: {mean_threshold:.6f}, MVC: {mean_mvc:.6f}")
+                            
+                            # Update status
+                            self.status_label.setText(f"Loaded previous calibration - Channels: {num_channels}, "
+                                                    f"Baseline: {mean_baseline:.4f}, Threshold: {mean_threshold:.4f}, MVC: {mean_mvc:.4f}")
+                            
+                            # Verify heatmap readiness
+                            if self.hdsemg_track is not None:
+                                print("[SESSION] ✅ Heatmap ready - calibration loaded and tracks initialized")
+                            else:
+                                print("[SESSION] ⚠️  Heatmap not ready - tracks not yet initialized")
+                        
+                    except (ValueError, IndexError) as e:
+                        print(f"[SESSION] Error parsing calibration data: {e}")
+                        self.is_calibrated = False
+                else:
+                    print("[SESSION] Previous session was not calibrated")
+                
+                # Load timestamp info
+                timestamp = session_data.get('timestamp', '')
+                if timestamp:
+                    print(f"[SESSION] Previous session timestamp: {timestamp}")
+                    
+        except Exception as e:
+            print(f"[SESSION] Error loading previous session data: {e}")
+    
+    def create_initial_session_file(self):
+        """Create initial session file with current configuration values (no calibration data)."""
+        print("[SESSION] Creating initial session file with default configuration...")
+        
+        # Temporarily set calibration status to ensure we save config-only data
+        original_calibrated = self.is_calibrated
+        self.is_calibrated = False  # This will cause save_session_data to use empty calibration placeholders
+        
+        # Save the session data
+        self.save_session_data()
+        
+        # Restore original calibration status
+        self.is_calibrated = original_calibrated
+        
+        print("[SESSION] Initial session file created with configuration data")
+    
+    def verify_heatmap_readiness(self):
+        """Verify and report if heatmap is ready to display."""
+        conditions = {
+            'is_calibrated': self.is_calibrated,
+            'mvc_rms_available': self.mvc_rms is not None,
+            'hdsemg_track_available': self.hdsemg_track is not None
+        }
+        
+        all_ready = all(conditions.values())
+        
+        print(f"[HEATMAP] Readiness check:")
+        for condition, status in conditions.items():
+            status_symbol = "✅" if status else "❌"
+            print(f"[HEATMAP]   {condition}: {status_symbol}")
+        
+        if all_ready:
+            num_channels = len(self.mvc_rms) if self.mvc_rms is not None else 0
+            print(f"[HEATMAP] ✅ Heatmap fully ready with {num_channels} channels")
+            return True
+        else:
+            print("[HEATMAP] ❌ Heatmap not ready - missing conditions above")
+            return False
+    
+    def save_session_data(self):
+        """Save configuration and calibrated values to CSV file."""
+        try:
+            # Ensure data directory exists
+            data_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'data')
+            os.makedirs(data_dir, exist_ok=True)
+            
+            csv_path = os.path.join(data_dir, 'previous_session.csv')
+            
+            # Prepare session data
+            timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            
+            # Configuration values
+            config_data = {
+                'timestamp': timestamp,
+                'default_plot_time': Config.DEFAULT_PLOT_TIME,
+                'update_rate': Config.UPDATE_RATE,
+                'plot_height': Config.PLOT_HEIGHT,
+                'window_width': Config.WINDOW_SIZE[0],
+                'window_height': Config.WINDOW_SIZE[1],
+                'is_calibrated': str(self.is_calibrated)
+            }
+            
+            # Add calibration data if available
+            if self.is_calibrated and self.baseline_rms is not None:
+                # Convert numpy arrays to comma-separated strings
+                config_data.update({
+                    'baseline_rms_mean': f"{np.mean(self.baseline_rms):.6f}",
+                    'baseline_rms_std': f"{np.std(self.baseline_rms):.6f}",
+                    'threshold_mean': f"{np.mean(self.threshold):.6f}", 
+                    'threshold_std': f"{np.std(self.threshold):.6f}",
+                    'mvc_rms_mean': f"{np.mean(self.mvc_rms):.6f}",
+                    'mvc_rms_std': f"{np.std(self.mvc_rms):.6f}",
+                    'num_channels': str(len(self.baseline_rms)),
+                    'baseline_rms_values': ','.join([f"{val:.6f}" for val in self.baseline_rms]),
+                    'threshold_values': ','.join([f"{val:.6f}" for val in self.threshold]),
+                    'mvc_rms_values': ','.join([f"{val:.6f}" for val in self.mvc_rms])
+                })
+            else:
+                # Add empty placeholders for calibration data
+                config_data.update({
+                    'baseline_rms_mean': '',
+                    'baseline_rms_std': '',
+                    'threshold_mean': '',
+                    'threshold_std': '',
+                    'mvc_rms_mean': '',
+                    'mvc_rms_std': '',
+                    'num_channels': '',
+                    'baseline_rms_values': '',
+                    'threshold_values': '',
+                    'mvc_rms_values': ''
+                })
+            
+            # Write to CSV file
+            with open(csv_path, 'w', newline='', encoding='utf-8') as csvfile:
+                fieldnames = list(config_data.keys())
+                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerow(config_data)
+            
+            print(f"[SESSION] Session data saved to {csv_path}")
+            
+        except Exception as e:
+            print(f"[SESSION] Error saving session data: {e}")
+    
+    def closeEvent(self, event):
+        """Handle window close event - save session data before closing."""
+        print("[SESSION] Saving session data before closing...")
+        self.save_session_data()
+        
+        # Stop streaming if active
+        if self.streaming_controller and self.streaming_controller.is_streaming:
+            self.streaming_controller.stop_streaming()
+        
+        # Stop recording if active  
+        if self.recording_manager.is_recording:
+            self.stop_recording()
+        
+        # Accept the close event
+        event.accept()

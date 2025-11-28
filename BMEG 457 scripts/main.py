@@ -33,6 +33,21 @@ class SelectionWindow(QtWidgets.QWidget):
         layout.addWidget(self.live_data_button)
         layout.addWidget(self.data_analysis_button)
         layout.addStretch()
+    
+    def closeEvent(self, event):
+        """Handle window close event - ensure session data is saved."""
+        # If live_data_window exists, trigger its save functionality
+        try:
+            # Find the live data window and save its session data
+            for widget in QtWidgets.QApplication.allWidgets():
+                if hasattr(widget, 'save_session_data') and hasattr(widget, 'is_calibrated'):
+                    print("[SESSION] Saving session data from selection window...")
+                    widget.save_session_data()
+                    break
+        except Exception as e:
+            print(f"[SESSION] Error saving session data from selection window: {e}")
+        
+        event.accept()
 
 
 class DataAnalysisWindow(QtWidgets.QWidget):
@@ -57,6 +72,21 @@ class DataAnalysisWindow(QtWidgets.QWidget):
         label.setStyleSheet("font-size: 18px;")
         label.setAlignment(QtCore.Qt.AlignCenter)
         layout.addWidget(label)
+    
+    def closeEvent(self, event):
+        """Handle window close event - ensure session data is saved."""
+        # If live_data_window exists, trigger its save functionality
+        try:
+            # Find the live data window and save its session data
+            for widget in QtWidgets.QApplication.allWidgets():
+                if hasattr(widget, 'save_session_data') and hasattr(widget, 'is_calibrated'):
+                    print("[SESSION] Saving session data from data analysis window...")
+                    widget.save_session_data()
+                    break
+        except Exception as e:
+            print(f"[SESSION] Error saving session data from data analysis window: {e}")
+        
+        event.accept()
 
 
 def main():
@@ -205,6 +235,17 @@ def main():
     # Wire back buttons
     live_data_window.back_button.clicked.connect(back_to_selection_from_live)
     data_analysis_window.back_button.clicked.connect(back_to_selection_from_analysis)
+    
+    # Ensure session data is saved when the application exits
+    def cleanup_and_exit():
+        """Clean up and save session data before application exit."""
+        print("[SESSION] Application closing - saving session data...")
+        if live_data_window:
+            live_data_window.save_session_data()
+        app.quit()
+    
+    # Handle application exit
+    app.aboutToQuit.connect(cleanup_and_exit)
 
     import sys
     sys.exit(app.exec_())

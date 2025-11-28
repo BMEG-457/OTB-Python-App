@@ -2,13 +2,14 @@
 
 from PyQt5 import QtWidgets, QtCore
 import numpy as np
+from ...core.config import Config
 
 
 class CalibrationDialog(QtWidgets.QDialog):
     """Modal dialog that collects RMS data during rest and contraction phases."""
     calibration_complete = QtCore.pyqtSignal(object, object, object)  # emits (baseline_rms, threshold, mvc_rms) as numpy arrays
     
-    def __init__(self, parent, receiver_thread, rest_duration=5, contraction_duration=5):
+    def __init__(self, parent, receiver_thread, rest_duration=Config.DEFAULT_REST_DURATION, contraction_duration=Config.DEFAULT_CONTRACTION_DURATION):
         super().__init__(parent)
         self.setWindowTitle("EMG Calibration")
         self.setModal(True)
@@ -33,13 +34,13 @@ class CalibrationDialog(QtWidgets.QDialog):
         
         # Instructions
         self.instruction_label = QtWidgets.QLabel("Click Start to begin calibration")
-        self.instruction_label.setStyleSheet("font-size: 14px;")
+        self.instruction_label.setStyleSheet(f"font-size: {Config.INSTRUCTION_FONT_SIZE}px;")
         self.instruction_label.setWordWrap(True)
         layout.addWidget(self.instruction_label)
         
         # Countdown timer display
         self.timer_label = QtWidgets.QLabel("--")
-        self.timer_label.setStyleSheet("font-size: 32px; text-align: center; color: red;")
+        self.timer_label.setStyleSheet(f"font-size: {Config.TIMER_FONT_SIZE}px; text-align: center; color: {Config.TIMER_COLOR};")
         self.timer_label.setAlignment(QtCore.Qt.AlignCenter)
         layout.addWidget(self.timer_label)
         
@@ -191,8 +192,8 @@ class CalibrationDialog(QtWidgets.QDialog):
         if stage_name == 'filtered' and self.countdown_timer.isActive():
             # Filter out saturated values before computing RMS
             # Saturation indicates hanging/disconnected electrodes
-            saturation_threshold_low = -32760  # Close to -32768 (int16 min)
-            saturation_threshold_high = 32760   # Close to 32767 (int16 max)
+            saturation_threshold_low = Config.SATURATION_LOW
+            saturation_threshold_high = Config.SATURATION_HIGH
             
             # Create mask for non-saturated values
             non_saturated_mask = (data > saturation_threshold_low) & (data < saturation_threshold_high)
@@ -246,7 +247,7 @@ class CalibrationDialog(QtWidgets.QDialog):
         print(f"[CALIBRATION] Contraction samples collected: {len(self.contraction_rms_values)}")
         
         # Check if we have any data (adjust minimum required samples here)
-        min_samples_required = 1  # Lower this if you want to allow calibration with less data
+        min_samples_required = Config.MIN_CALIBRATION_SAMPLES  # Lower this if you want to allow calibration with less data
         
         if len(self.rest_rms_values) < min_samples_required or len(self.contraction_rms_values) < min_samples_required:
             QtWidgets.QMessageBox.warning(self, "Calibration Failed", 
@@ -272,8 +273,8 @@ class CalibrationDialog(QtWidgets.QDialog):
         # Filter out saturation values (-32768, 32767) before calculating MVC
         # These values indicate hanging/disconnected electrodes
         mvc_rms = np.zeros(contraction_array.shape[1])  # One value per channel
-        saturation_threshold_low = -32760  # Close to -32768 (int16 min)
-        saturation_threshold_high = 32760   # Close to 32767 (int16 max)
+        saturation_threshold_low = Config.SATURATION_LOW
+        saturation_threshold_high = Config.SATURATION_HIGH
         
         for ch_idx in range(contraction_array.shape[1]):
             channel_data = contraction_array[:, ch_idx]
@@ -302,8 +303,8 @@ class CalibrationDialog(QtWidgets.QDialog):
         # Fix unreasonably low MVC values by spatial interpolation (8x8 grid)
         mvc_rms = self._fix_low_channels_spatial(mvc_rms)
         
-        # Threshold = baseline_mean + 3*std (based on rest baseline)
-        threshold = baseline_rms + 3.0 * baseline_std
+        # Threshold = baseline_mean + multiplier*std (based on rest baseline)
+        threshold = baseline_rms + Config.BASELINE_MULTIPLIER * baseline_std
         
         # Display summary statistics
         mean_baseline = np.mean(baseline_rms)

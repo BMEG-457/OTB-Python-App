@@ -7,12 +7,16 @@ import pyqtgraph as pg
 import struct
 import numpy as np
 
+# Import the main config
+sys.path.append('../BMEG 457 scripts')
+from app.core.config import Config as MainConfig
 
 class Config:
-    DEFAULT_PLOT_TIME = 1      # seconds
-    UPDATE_RATE = 16           # milliseconds (~60 FPS)
-    PLOT_HEIGHT = 600          # pixels
-    WINDOW_SIZE = (1200, 800)  # width, height
+    # Use main config values
+    DEFAULT_PLOT_TIME = MainConfig.DEFAULT_PLOT_TIME
+    UPDATE_RATE = MainConfig.UPDATE_RATE
+    PLOT_HEIGHT = MainConfig.PLOT_HEIGHT
+    WINDOW_SIZE = MainConfig.WINDOW_SIZE
 
 
 class Track:
@@ -124,12 +128,12 @@ class DataReceiverThread(QtCore.QThread):
 
                 self.data_received.emit(reshaped_data)
                 
-                # Calculate FPS every 100 packets
+                # Calculate FPS every N packets
                 self.packet_count += 1
-                if self.packet_count % 100 == 0:
+                if self.packet_count % MainConfig.FPS_CALCULATION_INTERVAL == 0:
                     current_time = time.time()
                     elapsed = current_time - self.last_time
-                    self.fps = 100 / elapsed if elapsed > 0 else 0
+                    self.fps = MainConfig.FPS_CALCULATION_INTERVAL / elapsed if elapsed > 0 else 0
                     self.last_time = current_time
                     self.status_update.emit(f"Data rate: {self.fps:.1f} packets/second")
                     
@@ -307,11 +311,11 @@ class Soundtrack(QtWidgets.QWidget):
 
 
 class SessantaquattroPlus:
-    def __init__(self, host="0.0.0.0", port=45454):
+    def __init__(self, host=MainConfig.DEFAULT_HOST, port=MainConfig.DEFAULT_PORT):
         self.host = host
         self.port = port
-        self.nchannels = 72
-        self.frequency = 2000
+        self.nchannels = MainConfig.DEFAULT_NCHANNELS
+        self.frequency = MainConfig.DEFAULT_FREQUENCY
         self.server_socket = None
         self.client_socket = None
 
@@ -345,7 +349,7 @@ class SessantaquattroPlus:
             }
         return frequencies.get(FSAMP, 2000)
 
-    def create_command(self, FSAMP=2, NCH=3, MODE=0, HRES=0, HPF=0, EXTEN=0, TRIG=0, REC=0, GO=1):
+    def create_command(self, FSAMP=MainConfig.DEFAULT_FSAMP, NCH=MainConfig.DEFAULT_NCH, MODE=MainConfig.DEFAULT_MODE, HRES=MainConfig.DEFAULT_HRES, HPF=MainConfig.DEFAULT_HPF, EXTEN=MainConfig.DEFAULT_EXTEN, TRIG=MainConfig.DEFAULT_TRIG, REC=MainConfig.DEFAULT_REC, GO=MainConfig.DEFAULT_GO):
         self.nchannels = self.get_num_channels(NCH, MODE)
         self.frequency = self.get_sampling_frequency(FSAMP, MODE)
 

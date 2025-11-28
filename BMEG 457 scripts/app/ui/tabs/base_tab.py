@@ -4,6 +4,7 @@ All tabs should inherit from BaseTab to ensure consistent UI structure.
 """
 from PyQt5 import QtWidgets, QtCore
 from abc import ABC, abstractmethod
+from ...core.config import Config
 
 
 class BaseTab(QtWidgets.QWidget, ABC):
@@ -28,19 +29,19 @@ class BaseTab(QtWidgets.QWidget, ABC):
     def _setup_layout(self):
         """
         Sets up the standardized horizontal layout.
-        Left: content area (stretch=3)
-        Right: control panel (stretch=0)
+        Left: content area (Config.CONTENT_STRETCH)
+        Right: control panel (Config.PANEL_STRETCH)
         """
         main_layout = QtWidgets.QHBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
         
         # Left side: Content area (scrollable by default)
         self.content_area = self.create_content_area()
-        main_layout.addWidget(self.content_area, stretch=3)
+        main_layout.addWidget(self.content_area, stretch=Config.CONTENT_STRETCH)
         
         # Right side: Control panel
         self.control_panel = self.create_control_panel()
-        main_layout.addWidget(self.control_panel, stretch=0)
+        main_layout.addWidget(self.control_panel, stretch=Config.PANEL_STRETCH)
     
     @abstractmethod
     def create_content_area(self) -> QtWidgets.QWidget:

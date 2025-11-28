@@ -5,6 +5,7 @@ import csv
 from datetime import datetime
 import os
 import time
+from ..core.config import Config
 
 
 class RecordingManager(QtCore.QObject):
@@ -15,7 +16,7 @@ class RecordingManager(QtCore.QObject):
     # Signal emitted when recording status changes
     status_update = QtCore.pyqtSignal(str)
     
-    def __init__(self, max_samples=1000000):
+    def __init__(self, max_samples=Config.MAX_RECORDING_SAMPLES):
         super().__init__()
         self.recording_data = []  # List of (timestamp, channel_data) tuples
         self.recording_start_time = None

@@ -3,6 +3,7 @@
 from PyQt5 import QtWidgets
 import numpy as np
 from app.core.track import Track
+from app.core.config import Config
 
 
 class TrackManager:
@@ -33,36 +34,36 @@ class TrackManager:
         """Initialize all tracks based on device configuration."""
         if self.device.nchannels == 72:
             track_info = [
-                ("HDsEMG 64 channels", 64, 0, 0.001, 0.000000286),
-                ("AUX 1", 1, 64, 1, 0.00014648),
-                ("AUX 2", 1, 65, 1, 0.00014648),
-                ("Quaternions", 4, 66, 1, 1),
-                ("Buffer", 1, 70, 1, 1),
-                ("Ramp", 1, 71, 1, 1),
+                ("HDsEMG 64 channels", 64, 0, Config.HDSEMG_OFFSET, Config.HDSEMG_CONV_FACTOR),
+                ("AUX 1", 1, 64, Config.AUX_OFFSET, Config.AUX_CONV_FACTOR),
+                ("AUX 2", 1, 65, Config.AUX_OFFSET, Config.AUX_CONV_FACTOR),
+                ("Quaternions", 4, 66, Config.QUAT_OFFSET, Config.QUAT_CONV_FACTOR),
+                ("Buffer", 1, 70, Config.BUFFER_OFFSET, Config.BUFFER_CONV_FACTOR),
+                ("Ramp", 1, 71, Config.RAMP_OFFSET, Config.RAMP_CONV_FACTOR),
             ]
         elif self.device.nchannels == 40:  # 64 bio channels in MODE=1
             track_info = [
-                ('HDsEMG 32 channels', 32, 0, 0.001, 0.000000286),
-                ('AUX 1', 1, 32, 1, 0.00014648),
-                ('AUX 2', 1, 33, 1, 0.00014648),
-                ('Quaternions', 4, 34, 1, 1),
-                ('Buffer', 1, 38, 1, 1),
-                ('Ramp', 1, 39, 1, 1),
+                ('HDsEMG 32 channels', 32, 0, Config.HDSEMG_OFFSET, Config.HDSEMG_CONV_FACTOR),
+                ('AUX 1', 1, 32, Config.AUX_OFFSET, Config.AUX_CONV_FACTOR),
+                ('AUX 2', 1, 33, Config.AUX_OFFSET, Config.AUX_CONV_FACTOR),
+                ('Quaternions', 4, 34, Config.QUAT_OFFSET, Config.QUAT_CONV_FACTOR),
+                ('Buffer', 1, 38, Config.BUFFER_OFFSET, Config.BUFFER_CONV_FACTOR),
+                ('Ramp', 1, 39, Config.RAMP_OFFSET, Config.RAMP_CONV_FACTOR),
             ]
         else:
             # Calculate main channels (total - 8 accessory channels)
             main = max(4, self.device.nchannels - 8)
             track_info = [
-                (f"HDsEMG {main} channels", main, 0, 0.001, 0.000000286),
-                ("AUX 1", 1, main, 1, 0.00014648),
-                ("AUX 2", 1, main + 1, 1, 0.00014648),
+                (f"HDsEMG {main} channels", main, 0, Config.HDSEMG_OFFSET, Config.HDSEMG_CONV_FACTOR),
+                ("AUX 1", 1, main, Config.AUX_OFFSET, Config.AUX_CONV_FACTOR),
+                ("AUX 2", 1, main + 1, Config.AUX_OFFSET, Config.AUX_CONV_FACTOR),
             ]
             # Only add other channels if we have enough total channels
             if self.device.nchannels >= main + 8:
                 track_info.extend([
-                    ('Quaternions', 4, main + 2, 1, 1),
-                    ('Buffer', 1, main + 6, 1, 1),
-                    ('Ramp', 1, main + 7, 1, 1),
+                    ('Quaternions', 4, main + 2, Config.QUAT_OFFSET, Config.QUAT_CONV_FACTOR),
+                    ('Buffer', 1, main + 6, Config.BUFFER_OFFSET, Config.BUFFER_CONV_FACTOR),
+                    ('Ramp', 1, main + 7, Config.RAMP_OFFSET, Config.RAMP_CONV_FACTOR),
                 ])
         
         for title, n, idx, offset, conv in track_info:
@@ -72,7 +73,7 @@ class TrackManager:
             track = Track(title, self.device.frequency, n, offset, conv, self.plot_time)
             self.tracks.append(track)
 
-            track.plot_widget.setMinimumHeight(300)
+            track.plot_widget.setMinimumHeight(Config.TRACK_MIN_HEIGHT)
             layout.addWidget(track.plot_widget)
             self.scroll_layout.addWidget(track_container)
             self.track_containers.append((title, track_container))

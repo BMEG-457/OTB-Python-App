@@ -1,26 +1,19 @@
 import socket
 import sys
+from .config import Config
 
 
 class SessantaquattroPlus:
-    def __init__(self, host="0.0.0.0", port=45454):
+    def __init__(self, host=Config.DEFAULT_HOST, port=Config.DEFAULT_PORT):
         self.host = host
         self.port = port
-        self.nchannels = 72
-        self.frequency = 2000
+        self.nchannels = Config.DEFAULT_NCHANNELS
+        self.frequency = Config.DEFAULT_FREQUENCY
         self.server_socket = None
         self.client_socket = None
 
     def get_num_channels(self, NCH, MODE):
-        if NCH == 0:
-            return 12 if MODE == 1 else 16
-        elif NCH == 1:
-            return 16 if MODE == 1 else 24
-        elif NCH == 2:
-            return 24 if MODE == 1 else 40
-        elif NCH == 3:
-            return 40 if MODE == 1 else 72
-        return 72
+        return Config.CHANNEL_MAPPING.get((NCH, MODE), Config.DEFAULT_NCHANNELS)
 
     def get_sampling_frequency(self, FSAMP, MODE):
         if MODE == 3:
@@ -29,7 +22,7 @@ class SessantaquattroPlus:
             frequencies = {0: 500, 1: 1000, 2: 2000, 3: 4000}
         return frequencies.get(FSAMP, 2000)
 
-    def create_command(self, FSAMP=2, NCH=3, MODE=0, HRES=0, HPF=1, EXTEN=0, TRIG=0, REC=0, GO=1):
+    def create_command(self, FSAMP=Config.DEFAULT_FSAMP, NCH=Config.DEFAULT_NCH, MODE=Config.DEFAULT_MODE, HRES=Config.DEFAULT_HRES, HPF=Config.DEFAULT_HPF, EXTEN=Config.DEFAULT_EXTEN, TRIG=Config.DEFAULT_TRIG, REC=Config.DEFAULT_REC, GO=Config.DEFAULT_GO):
         """
         Create command byte for Sessantaquattro+
         
@@ -70,7 +63,7 @@ class SessantaquattroPlus:
         return Command
     
 
-    def is_connected_to_device_network(self, device_network_prefix="192.168.1"):
+    def is_connected_to_device_network(self, device_network_prefix=Config.DEVICE_NETWORK_PREFIX):
         """Check if connected to the device's WiFi network"""
         try:
             # Get the actual IP being used for network communication
@@ -90,7 +83,7 @@ class SessantaquattroPlus:
             print(f"Error checking network: {e}")
             return False
         
-    def start_server(self, connection_timeout=10):
+    def start_server(self, connection_timeout=Config.CONNECTION_TIMEOUT):
         # Pre-flight checks
         if not self.is_connected_to_device_network():
             print("Please connect to the Sessantaquattroplus device's WiFi network first")

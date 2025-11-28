@@ -6,6 +6,7 @@ from PyQt5 import QtWidgets
 import pyqtgraph as pg
 import numpy as np
 from app.ui.tabs.base_tab import BaseTab
+from app.core.config import Config
 
 
 class HeatmapTab(BaseTab):
@@ -16,7 +17,7 @@ class HeatmapTab(BaseTab):
     
     def __init__(self, parent=None):
         # Initialize any state variables before calling super().__init__()
-        self.heatmap_data = np.zeros((8, 8))
+        self.heatmap_data = np.zeros(Config.HEATMAP_SIZE)
         self.heatmap_labels = []
         super().__init__(parent)
     
@@ -35,14 +36,14 @@ class HeatmapTab(BaseTab):
         self.heatmap_plot.addItem(self.heatmap_img)
         
         # Initialize with zeros
-        self.heatmap_img.setImage(self.heatmap_data.T, levels=(0, 1))
+        self.heatmap_img.setImage(self.heatmap_data.T, levels=Config.HEATMAP_LEVELS)
         
         # Set colormap
-        colormap = pg.colormap.get('viridis')
+        colormap = pg.colormap.get(Config.HEATMAP_COLORMAP)
         self.heatmap_img.setColorMap(colormap)
         
         # Add colorbar
-        colorbar = pg.ColorBarItem(values=(0, 1), colorMap=colormap)
+        colorbar = pg.ColorBarItem(values=Config.HEATMAP_LEVELS, colorMap=colormap)
         colorbar.setImageItem(self.heatmap_img)
         
         # Add text labels for channel numbers
@@ -74,18 +75,18 @@ class HeatmapTab(BaseTab):
         Update the heatmap with new data.
         
         Args:
-            normalized_rms: Array of 64 values normalized to [0, 1]
+            normalized_rms: Array of values normalized to [0, 1]
         """
-        if len(normalized_rms) >= 64:
-            # Reshape to 8x8 grid
-            for col in range(8):
-                for row in range(8):
-                    channel_idx = col * 8 + (7 - row)
+        if len(normalized_rms) >= Config.HEATMAP_CHANNELS:
+            # Reshape to grid
+            for col in range(Config.HEATMAP_SIZE[0]):
+                for row in range(Config.HEATMAP_SIZE[1]):
+                    channel_idx = col * Config.HEATMAP_SIZE[0] + (Config.HEATMAP_SIZE[1] - 1 - row)
                     if channel_idx < len(normalized_rms):
                         self.heatmap_data[row, col] = normalized_rms[channel_idx]
             
             # Update the image
-            self.heatmap_img.setImage(self.heatmap_data.T, levels=(0, 1))
+            self.heatmap_img.setImage(self.heatmap_data.T, levels=Config.HEATMAP_LEVELS)
 
 
 class AllTracksTab(BaseTab):

@@ -5,6 +5,7 @@
 # These calibrated values should be passed as parameters to the analysis functions.
 from scipy.signal import spectrogram
 import numpy as np
+from ..core.config import Config
 
 def rms(data):
     return np.sqrt(np.mean(data**2, axis=1, keepdims=True))
@@ -23,8 +24,8 @@ def averaged_channels(data):
 # Note: Baseline and threshold values are provided by the calibration phase
 # relative muscle strength (shown by the heatmap), time to muscle fatigue (function), activation timing (contraction detection), muscle-cocontraction (idk)
 
-def detect_contractions_rms_rate(rms_data, fs, rate_threshold=0.001, min_duration_samples=5, 
-                                 smoothing_window=3, hysteresis_factor=0.6, merge_gap_samples=None):
+def detect_contractions_rms_rate(rms_data, fs, rate_threshold=Config.RATE_THRESHOLD, min_duration_samples=Config.MIN_DURATION_SAMPLES, 
+                                 smoothing_window=Config.SMOOTHING_WINDOW, hysteresis_factor=Config.HYSTERESIS_FACTOR, merge_gap_samples=None):
     """
     Detect muscle contractions based on rate of change in RMS with improved robustness to spikes.
     
@@ -66,7 +67,7 @@ def detect_contractions_rms_rate(rms_data, fs, rate_threshold=0.001, min_duratio
     in_contraction = False
     start_idx = None
     last_offset_idx = -999  # Track last offset to prevent rapid switching
-    refractory_period = max(3, int(min_duration_samples * 0.3))  # 30% of min duration
+    refractory_period = max(3, int(min_duration_samples * Config.REFRACTORY_PERIOD_FACTOR))  # Config factor of min duration
     
     for i in range(len(rms_data)):
         if onset_mask[i] and not in_contraction:

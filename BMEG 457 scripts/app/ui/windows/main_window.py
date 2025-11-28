@@ -121,7 +121,7 @@ class SoundtrackWindow(QtWidgets.QWidget):
         self.scroll_widget = QtWidgets.QWidget()
         self.scroll_layout = QtWidgets.QVBoxLayout(self.scroll_widget)
         self.scroll_area.setWidget(self.scroll_widget)
-        all_tracks_layout.addWidget(self.scroll_area, stretch=3)
+        all_tracks_layout.addWidget(self.scroll_area, stretch=Config.CONTENT_STRETCH)
 
         # Right-side control panel
         control_panel = QtWidgets.QWidget()
@@ -131,7 +131,7 @@ class SoundtrackWindow(QtWidgets.QWidget):
         ctrl_layout.addWidget(self.select_channels_button)
         ctrl_layout.addWidget(self.select_tracks_button)
         ctrl_layout.addStretch()
-        all_tracks_layout.addWidget(control_panel, stretch=0)
+        all_tracks_layout.addWidget(control_panel, stretch=Config.PANEL_STRETCH)
         
         self.tabs.addTab(all_tracks_content, "All Tracks")
 
@@ -157,7 +157,7 @@ class SoundtrackWindow(QtWidgets.QWidget):
         self.hdsemg_scroll_widget = QtWidgets.QWidget()
         self.hdsemg_scroll_layout = QtWidgets.QVBoxLayout(self.hdsemg_scroll_widget)
         self.hdsemg_scroll_area.setWidget(self.hdsemg_scroll_widget)
-        hdsemg_layout.addWidget(self.hdsemg_scroll_area, stretch=3)
+        hdsemg_layout.addWidget(self.hdsemg_scroll_area, stretch=Config.CONTENT_STRETCH)
 
         # Right-side control panel
         hdsemg_control_panel = QtWidgets.QWidget()
@@ -165,7 +165,7 @@ class SoundtrackWindow(QtWidgets.QWidget):
         self.hd_average_select_button = QtWidgets.QPushButton("Select Avg Channels")
         hdsemg_ctrl_layout.addWidget(self.hd_average_select_button)
         hdsemg_ctrl_layout.addStretch()
-        hdsemg_layout.addWidget(hdsemg_control_panel, stretch=0)
+        hdsemg_layout.addWidget(hdsemg_control_panel, stretch=Config.PANEL_STRETCH)
         
         self.tabs.addTab(hdsemg_content, "HDsEMG")
 
@@ -182,7 +182,7 @@ class SoundtrackWindow(QtWidgets.QWidget):
         self.feature_scroll_widget = QtWidgets.QWidget()
         self.feature_scroll_layout = QtWidgets.QVBoxLayout(self.feature_scroll_widget)
         self.feature_scroll_area.setWidget(self.feature_scroll_widget)
-        feature_layout.addWidget(self.feature_scroll_area, stretch=3)
+        feature_layout.addWidget(self.feature_scroll_area, stretch=Config.CONTENT_STRETCH)
 
         # Right-side control panel
         feature_control_panel = QtWidgets.QWidget()
@@ -190,7 +190,7 @@ class SoundtrackWindow(QtWidgets.QWidget):
         self.feature_controls_button = QtWidgets.QPushButton("Feature Controls")
         feature_ctrl_layout.addWidget(self.feature_controls_button)
         feature_ctrl_layout.addStretch()
-        feature_layout.addWidget(feature_control_panel, stretch=0)
+        feature_layout.addWidget(feature_control_panel, stretch=Config.PANEL_STRETCH)
         
         self.tabs.addTab(feature_content, "Features")
 
@@ -233,13 +233,13 @@ class SoundtrackWindow(QtWidgets.QWidget):
                 self.heatmap_plot.addItem(text)
                 self.heatmap_labels.append(text)
         
-        heatmap_layout.addWidget(self.heatmap_view, stretch=3)
+        heatmap_layout.addWidget(self.heatmap_view, stretch=Config.CONTENT_STRETCH)
 
         # Right-side control panel
         heatmap_control_panel = QtWidgets.QWidget()
         heatmap_ctrl_layout = QtWidgets.QVBoxLayout(heatmap_control_panel)
         heatmap_ctrl_layout.addStretch()
-        heatmap_layout.addWidget(heatmap_control_panel, stretch=0)
+        heatmap_layout.addWidget(heatmap_control_panel, stretch=Config.PANEL_STRETCH)
         
         self.tabs.addTab(heatmap_content, "Heatmap")
 
@@ -267,7 +267,7 @@ class SoundtrackWindow(QtWidgets.QWidget):
         self.hd_average_channels = self.track_manager.hd_average_channels
 
         # Recording Manager
-        self.recording_manager = RecordingManager(max_samples=1000000)
+        self.recording_manager = RecordingManager(max_samples=Config.MAX_RECORDING_SAMPLES)
         self.recording_manager.overflow_stop_requested.connect(self.handle_recording_overflow)
         self.recording_manager.status_update.connect(self.update_status)
 
@@ -290,8 +290,8 @@ class SoundtrackWindow(QtWidgets.QWidget):
         get_pipeline('fft').add_stage(transforms.fft_transform)
         
         # Filtered pipeline - use lambda to provide required parameters
-        get_pipeline('filtered').add_stage(lambda data: filters.butter_bandpass(data, low=20, high=450, fs=self.device.frequency))
-        get_pipeline('filtered').add_stage(lambda data: filters.notch(data, freq=60, fs=self.device.frequency))
+        get_pipeline('filtered').add_stage(lambda data: filters.butter_bandpass(data, low=Config.BANDPASS_LOW, high=Config.BANDPASS_HIGH, fs=self.device.frequency))
+        get_pipeline('filtered').add_stage(lambda data: filters.notch(data, freq=Config.NOTCH_FREQ, fs=self.device.frequency))
         
         # Rectified pipeline
         get_pipeline('rectified').add_stage(filters.rectify)
@@ -329,12 +329,12 @@ class SoundtrackWindow(QtWidgets.QWidget):
         
         try:
             buf = self.hdsemg_track.buffer
-            window_size = min(100, buf.shape[1])
+            window_size = min(Config.RMS_WINDOW_SIZE, buf.shape[1])
             recent_data = buf[:, -window_size:]
             
             # Filter out saturated values before computing RMS
-            saturation_threshold_low = -32760  # Close to -32768 (int16 min)
-            saturation_threshold_high = 32760   # Close to 32767 (int16 max)
+            saturation_threshold_low = Config.SATURATION_LOW
+            saturation_threshold_high = Config.SATURATION_HIGH
             
             # Compute RMS per channel with saturation filtering
             current_rms = np.zeros(recent_data.shape[0])
@@ -352,8 +352,8 @@ class SoundtrackWindow(QtWidgets.QWidget):
                     # All samples saturated - use 0
                     current_rms[ch_idx] = 0.0
             
-            if len(current_rms) >= 64 and len(self.mvc_rms) >= 64:
-                normalized_rms = current_rms[:64] / (self.mvc_rms[:64] + 1e-10)
+            if len(current_rms) >= Config.HEATMAP_CHANNELS and len(self.mvc_rms) >= Config.HEATMAP_CHANNELS:
+                normalized_rms = current_rms[:Config.HEATMAP_CHANNELS] / (self.mvc_rms[:Config.HEATMAP_CHANNELS] + 1e-10)
                 normalized_rms = np.clip(normalized_rms, 0, 1)
                 
                 for col in range(8):
@@ -528,7 +528,7 @@ class SoundtrackWindow(QtWidgets.QWidget):
                                          "Device not connected. Please connect device first.")
             return
         
-        dlg = CalibrationDialog(self, self.receiver_thread, rest_duration=3, contraction_duration=3)
+        dlg = CalibrationDialog(self, self.receiver_thread, rest_duration=Config.DEFAULT_REST_DURATION, contraction_duration=Config.DEFAULT_CONTRACTION_DURATION)
         dlg.calibration_complete.connect(self.on_calibration_complete)
         dlg.exec_()
     

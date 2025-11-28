@@ -1,9 +1,10 @@
 import numpy as np
 import pyqtgraph as pg
+from .config import Config
 
 # individual plots
 class Track:
-    def __init__(self, title, frequency, num_channels, offset, conv_fact, plot_time=1):
+    def __init__(self, title, frequency, num_channels, offset, conv_fact, plot_time=Config.DEFAULT_PLOT_TIME):
         self.title = title
         self.frequency = frequency
         self.num_channels = num_channels
@@ -18,10 +19,11 @@ class Track:
         self.plot_widget = pg.PlotWidget(title=self.title)
         self.plot_widget.setXRange(0, self.plot_time)
         self.plot_widget.setMouseEnabled(x=True, y=True)
-        self.plot_widget.showGrid(x=True, y=True, alpha=0.3)
-        self.plot_widget.getViewBox().setBackgroundColor((30, 30, 30))
-        self.plot_widget.setAntialiasing(True)
-        self.plot_widget.enableAutoRange()
+        self.plot_widget.showGrid(x=True, y=True, alpha=Config.GRID_ALPHA)
+        self.plot_widget.getViewBox().setBackgroundColor(Config.PLOT_BACKGROUND_COLOR)
+        self.plot_widget.setAntialiasing(Config.ENABLE_ANTIALIASING)
+        if Config.ENABLE_AUTO_RANGE:
+            self.plot_widget.enableAutoRange()
 
         # Add labels and units
         if 'HDsEMG' in title or 'channels' in title:
@@ -32,11 +34,11 @@ class Track:
 
         self.curves = []
         for i in range(num_channels):
-            pen = pg.mkPen(color=(255, 255, 255), width=1) if title in [
+            pen = pg.mkPen(color=(255, 255, 255), width=Config.PLOT_WIDTH) if title in [
                 "AUX 1", "AUX 2", "Quaternions", "Buffer", "Ramp"
-            ] else pg.mkPen(color=i, width=1)
+            ] else pg.mkPen(color=i, width=Config.PLOT_WIDTH)
 
-            curve_name = f"Ch {i+1}" if i < 8 or num_channels <= 8 else None
+            curve_name = f"Ch {i+1}" if i < Config.MAX_LEGEND_CHANNELS or num_channels <= Config.MAX_LEGEND_CHANNELS else None
             self.curves.append(self.plot_widget.plot(pen=pen, name=curve_name))
 
         # by default all channels are visible; use set_visible_channels to change

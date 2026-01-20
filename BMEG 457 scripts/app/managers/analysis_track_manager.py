@@ -1,18 +1,17 @@
 """Track manager for data analysis mode."""
 
 from PyQt5 import QtWidgets
-import numpy as np
 from app.core.analysis_track import AnalysisTrack
 
 
 class AnalysisTrackManager:
-    """Manages tracks for data analysis mode - creates HDsEMG track from CSV data."""
+    """Manages track for data analysis mode - creates track from CSV data."""
 
     def __init__(self, scroll_layout):
         self.scroll_layout = scroll_layout
 
-        # Track storage - only HDsEMG track
-        self.hdsemg_track = None
+        # Track storage - single track for HDsEMG
+        self.track = None
         self.track_container = None
 
         # CSV data reference
@@ -23,42 +22,39 @@ class AnalysisTrackManager:
         self.view_duration = 1.0
 
     def initialize_tracks_from_csv(self, csv_loader):
-        """Create HDsEMG track from loaded CSV data.
+        """Create track from loaded CSV data with multi-resolution support.
 
         Args:
-            csv_loader: CSVDataLoader instance with loaded data
+            csv_loader: CSVDataLoader instance with loaded and preprocessed data
         """
         self.csv_loader = csv_loader
         self._clear_tracks()
 
-        num_channels = csv_loader.get_channel_count()
-        timestamps = csv_loader.timestamps
-        data = csv_loader.data
+        num_channels = min(64, csv_loader.get_channel_count())
 
-        # Use first 64 channels (or all if fewer)
-        hdsemg_channels = min(64, num_channels)
-        track_data = data[:hdsemg_channels, :]
+        # Get resolution data from loader
+        resolution_data = csv_loader.resolution_data
 
         # Create track container
         self.track_container = QtWidgets.QWidget()
         layout = QtWidgets.QVBoxLayout(self.track_container)
 
-        # Create HDsEMG track - plots raw values, no offset
-        self.hdsemg_track = AnalysisTrack(
-            f"HDsEMG {hdsemg_channels} channels",
-            hdsemg_channels,
-            timestamps,
-            track_data
+        # Create track with multi-resolution data
+        self.track = AnalysisTrack(
+            f"HDsEMG {num_channels} channels",
+            num_channels,
+            resolution_data
         )
 
-        self.hdsemg_track.plot_widget.setMinimumHeight(400)
-        layout.addWidget(self.hdsemg_track.plot_widget)
+        self.track.plot_widget.setMinimumHeight(500)
+        layout.addWidget(self.track.plot_widget)
         self.scroll_layout.addWidget(self.track_container)
 
         self.scroll_layout.addStretch()
 
-        # Apply initial view
-        self.set_view_window(self.view_start, self.view_duration)
+        # Apply initial view (full duration)
+        duration = csv_loader.get_duration()
+        self.set_view_window(0, duration)
 
     def _clear_tracks(self):
         """Clear existing track and container."""
@@ -66,7 +62,7 @@ class AnalysisTrackManager:
             self.track_container.setParent(None)
             self.track_container.deleteLater()
 
-        self.hdsemg_track = None
+        self.track = None
         self.track_container = None
 
         # Clear stretch items from layout
@@ -85,18 +81,39 @@ class AnalysisTrackManager:
         self.view_start = start_time
         self.view_duration = duration
 
-        if self.hdsemg_track:
-            self.hdsemg_track.set_view_window(start_time, duration)
+        if self.track:
+            self.track.set_view_window(start_time, duration)
 
     def draw_all_tracks(self):
         """Draw the track with current view settings."""
-        if self.hdsemg_track:
-            self.hdsemg_track.draw()
+        if self.track:
+            self.track.draw()
 
-    def get_hdsemg_channel_count(self):
-        """Get number of channels in HDsEMG track."""
-        if self.hdsemg_track:
-            return self.hdsemg_track.num_channels
+    def set_resolution(self, level: str):
+        """Set resolution level for display.
+
+        Args:
+            level: Resolution level name ('Raw', 'L1', 'L2', 'L3')
+        """
+        if self.track:
+            self.track.set_resolution(level)
+
+    def get_current_resolution(self) -> str:
+        """Get current resolution level."""
+        if self.track:
+            return self.track.get_current_resolution()
+        return 'L2'
+
+    def get_available_resolutions(self) -> list:
+        """Get list of available resolution levels."""
+        if self.csv_loader:
+            return self.csv_loader.get_available_resolutions()
+        return []
+
+    def get_channel_count(self):
+        """Get number of channels available."""
+        if self.track:
+            return self.track.num_channels
         return 0
 
     def get_total_duration(self):
@@ -105,17 +122,17 @@ class AnalysisTrackManager:
             return self.csv_loader.get_duration()
         return 0.0
 
-    def set_visible_channels(self, channels):
-        """Set which channels are visible on the HDsEMG track.
+    def set_selected_channels(self, channels: list):
+        """Set which channels to display (max 2).
 
         Args:
-            channels: List of channel indices to show
+            channels: List of channel indices to display
         """
-        if self.hdsemg_track:
-            self.hdsemg_track.set_visible_channels(channels)
+        if self.track:
+            self.track.set_selected_channels(channels)
 
-    def get_visible_channels(self):
-        """Get list of currently visible channel indices."""
-        if self.hdsemg_track:
-            return self.hdsemg_track.get_visible_channels()
+    def get_selected_channels(self) -> list:
+        """Get list of currently selected channel indices."""
+        if self.track:
+            return self.track.get_selected_channels()
         return []

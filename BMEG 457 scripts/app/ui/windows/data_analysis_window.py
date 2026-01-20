@@ -1,11 +1,11 @@
 """Window for analyzing recorded EMG data from CSV files."""
 
-from PyQt5 import QtWidgets, QtCore
+from PyQt5 import QtWidgets, QtCore, QtGui
 import os
 
 from app.data.csv_loader import CSVDataLoader
 from app.managers.analysis_track_manager import AnalysisTrackManager
-from app.ui.dialogs.dialogs import ChannelSelectorDialog
+from app.managers.time_navigation_controller import TimeNavigationController
 
 
 class DataAnalysisWindow(QtWidgets.QWidget):
@@ -16,6 +16,8 @@ class DataAnalysisWindow(QtWidgets.QWidget):
 
         self.csv_loader = CSVDataLoader()
         self.track_manager = None
+        self.time_controller = TimeNavigationController()
+        self.total_duration = 0.0
 
         self.setWindowTitle("Data Analysis")
         self.setGeometry(100, 100, 1200, 800)
@@ -32,6 +34,9 @@ class DataAnalysisWindow(QtWidgets.QWidget):
 
         # File controls row
         self._create_file_controls()
+
+        # Time/window controls row
+        self._create_time_controls()
 
         # Main content area with plot and controls
         self._create_main_content()
@@ -70,6 +75,72 @@ class DataAnalysisWindow(QtWidgets.QWidget):
         file_layout.addStretch()
         self.main_layout.addWidget(file_row)
 
+    def _create_time_controls(self):
+        """Create time navigation and window controls."""
+        time_row = QtWidgets.QWidget()
+        time_layout = QtWidgets.QHBoxLayout(time_row)
+
+        # Go to start button
+        self.start_button = QtWidgets.QPushButton("<<")
+        self.start_button.setMaximumWidth(40)
+        self.start_button.setToolTip("Go to start")
+        time_layout.addWidget(self.start_button)
+
+        # Step back button
+        self.step_back_button = QtWidgets.QPushButton("<")
+        self.step_back_button.setMaximumWidth(30)
+        self.step_back_button.setToolTip("Step back")
+        time_layout.addWidget(self.step_back_button)
+
+        # Time slider
+        self.time_slider = QtWidgets.QSlider(QtCore.Qt.Horizontal)
+        self.time_slider.setMinimum(0)
+        self.time_slider.setMaximum(1000)  # 0.1% resolution
+        self.time_slider.setValue(0)
+        time_layout.addWidget(self.time_slider, stretch=1)
+
+        # Step forward button
+        self.step_forward_button = QtWidgets.QPushButton(">")
+        self.step_forward_button.setMaximumWidth(30)
+        self.step_forward_button.setToolTip("Step forward")
+        time_layout.addWidget(self.step_forward_button)
+
+        # Go to end button
+        self.end_button = QtWidgets.QPushButton(">>")
+        self.end_button.setMaximumWidth(40)
+        self.end_button.setToolTip("Go to end")
+        time_layout.addWidget(self.end_button)
+
+        time_layout.addSpacing(20)
+
+        # Position label
+        self.position_label = QtWidgets.QLabel("Position: 0.00s / 0.00s")
+        time_layout.addWidget(self.position_label)
+
+        time_layout.addSpacing(20)
+
+        # Window duration input
+        time_layout.addWidget(QtWidgets.QLabel("Window (s):"))
+        self.window_input = QtWidgets.QLineEdit("5")
+        self.window_input.setMaximumWidth(60)
+        self.window_input.setValidator(QtGui.QDoubleValidator(0.1, 1000, 2))
+        time_layout.addWidget(self.window_input)
+
+        self.apply_window_button = QtWidgets.QPushButton("Apply")
+        self.apply_window_button.setMaximumWidth(60)
+        time_layout.addWidget(self.apply_window_button)
+
+        time_layout.addSpacing(20)
+
+        # Resolution selector
+        time_layout.addWidget(QtWidgets.QLabel("Resolution:"))
+        self.resolution_combo = QtWidgets.QComboBox()
+        self.resolution_combo.addItems(['Raw (2000 Hz)', 'L1 (500 Hz)', 'L2 (200 Hz)', 'L3 (50 Hz)'])
+        self.resolution_combo.setCurrentIndex(2)  # Default to L2
+        time_layout.addWidget(self.resolution_combo)
+
+        self.main_layout.addWidget(time_row)
+
     def _create_main_content(self):
         """Create main content area with plot and control panel."""
         content_widget = QtWidgets.QWidget()
@@ -90,11 +161,27 @@ class DataAnalysisWindow(QtWidgets.QWidget):
         control_panel = QtWidgets.QWidget()
         ctrl_layout = QtWidgets.QVBoxLayout(control_panel)
 
-        self.select_channels_button = QtWidgets.QPushButton("Select Channels")
-        ctrl_layout.addWidget(self.select_channels_button)
+        # Channel selection section
+        ctrl_layout.addWidget(QtWidgets.QLabel("Select Channels (max 2):"))
 
-        # Label showing selected channels count
-        self.channels_info_label = QtWidgets.QLabel("No channels selected")
+        # Channel 1 selector
+        ch1_layout = QtWidgets.QHBoxLayout()
+        ch1_layout.addWidget(QtWidgets.QLabel("Ch 1:"))
+        self.channel1_combo = QtWidgets.QComboBox()
+        self.channel1_combo.addItem("None")
+        ch1_layout.addWidget(self.channel1_combo)
+        ctrl_layout.addLayout(ch1_layout)
+
+        # Channel 2 selector
+        ch2_layout = QtWidgets.QHBoxLayout()
+        ch2_layout.addWidget(QtWidgets.QLabel("Ch 2:"))
+        self.channel2_combo = QtWidgets.QComboBox()
+        self.channel2_combo.addItem("None")
+        ch2_layout.addWidget(self.channel2_combo)
+        ctrl_layout.addLayout(ch2_layout)
+
+        # Info label
+        self.channels_info_label = QtWidgets.QLabel("Load a file to select channels")
         self.channels_info_label.setStyleSheet("color: gray; font-size: 11px;")
         ctrl_layout.addWidget(self.channels_info_label)
 
@@ -108,8 +195,23 @@ class DataAnalysisWindow(QtWidgets.QWidget):
         # File controls
         self.open_file_button.clicked.connect(self.open_file_dialog)
 
-        # Channel selection
-        self.select_channels_button.clicked.connect(self.open_channel_selector)
+        # Time navigation
+        self.start_button.clicked.connect(self._go_to_start)
+        self.step_back_button.clicked.connect(self._step_back)
+        self.step_forward_button.clicked.connect(self._step_forward)
+        self.end_button.clicked.connect(self._go_to_end)
+        self.time_slider.valueChanged.connect(self._on_slider_changed)
+
+        # Window controls
+        self.apply_window_button.clicked.connect(self._apply_window_duration)
+        self.window_input.returnPressed.connect(self._apply_window_duration)
+
+        # Resolution selector
+        self.resolution_combo.currentIndexChanged.connect(self._on_resolution_changed)
+
+        # Channel selectors
+        self.channel1_combo.currentIndexChanged.connect(self._on_channel_selection_changed)
+        self.channel2_combo.currentIndexChanged.connect(self._on_channel_selection_changed)
 
     def open_file_dialog(self):
         """Show file picker for CSV files."""
@@ -145,13 +247,13 @@ class DataAnalysisWindow(QtWidgets.QWidget):
         self.filename_label.setText(filename)
         self.filename_label.setStyleSheet("color: black;")
 
-        duration = self.csv_loader.get_duration()
+        self.total_duration = self.csv_loader.get_duration()
         channels = min(64, self.csv_loader.get_channel_count())
         samples = self.csv_loader.get_sample_count()
         sample_rate = self.csv_loader.sample_rate
 
         self.file_info_label.setText(
-            f"Duration: {duration:.2f}s | {channels} channels | "
+            f"Duration: {self.total_duration:.2f}s | {channels} channels | "
             f"{samples} samples | {sample_rate:.0f} Hz"
         )
 
@@ -159,47 +261,153 @@ class DataAnalysisWindow(QtWidgets.QWidget):
         self.track_manager = AnalysisTrackManager(self.scroll_layout)
         self.track_manager.initialize_tracks_from_csv(self.csv_loader)
 
-        # Set view to show ALL data at once (full duration)
-        self.track_manager.set_view_window(0, duration)
+        # Populate channel selectors
+        self._populate_channel_selectors(channels)
 
-        # No channels selected initially
-        self.channels_info_label.setText("No channels selected - click Select Channels")
+        # Set initial window duration (5 seconds or full duration if shorter)
+        initial_window = min(5.0, self.total_duration)
+        self.window_input.setText(str(initial_window))
+        self.time_controller.reset(self.total_duration, initial_window)
+
+        # Apply initial view
+        self._update_view()
+
+        # Update info
+        self.channels_info_label.setText("Select up to 2 channels to display")
         self.channels_info_label.setStyleSheet("color: orange; font-size: 11px;")
 
-        # Draw (will show empty plot since no channels are visible)
-        self.track_manager.draw_all_tracks()
-
-        # Prompt user to select channels
+        # Show info message
         QtWidgets.QMessageBox.information(
             self, "File Loaded",
-            f"Loaded {channels} channels.\n\nClick 'Select Channels' to choose which channels to display."
+            f"Loaded {channels} channels with multi-resolution preprocessing.\n\n"
+            f"Resolutions available:\n"
+            f"  • Raw: {sample_rate:.0f} Hz\n"
+            f"  • L1: 500 Hz\n"
+            f"  • L2: 200 Hz\n"
+            f"  • L3: 50 Hz\n\n"
+            f"Select up to 2 channels to display."
         )
 
-    def open_channel_selector(self):
-        """Open channel selection dialog."""
+    def _populate_channel_selectors(self, num_channels: int):
+        """Populate channel selector dropdowns."""
+        # Block signals while populating
+        self.channel1_combo.blockSignals(True)
+        self.channel2_combo.blockSignals(True)
+
+        self.channel1_combo.clear()
+        self.channel2_combo.clear()
+
+        self.channel1_combo.addItem("None")
+        self.channel2_combo.addItem("None")
+
+        for i in range(num_channels):
+            self.channel1_combo.addItem(f"Channel {i + 1}")
+            self.channel2_combo.addItem(f"Channel {i + 1}")
+
+        self.channel1_combo.blockSignals(False)
+        self.channel2_combo.blockSignals(False)
+
+    def _on_channel_selection_changed(self):
+        """Handle channel selection changes."""
         if self.track_manager is None:
-            QtWidgets.QMessageBox.warning(
-                self, "No Data",
-                "Please load a CSV file first."
-            )
             return
 
-        num = self.track_manager.get_hdsemg_channel_count()
-        current = self.track_manager.get_visible_channels()
+        selected = []
 
-        dlg = ChannelSelectorDialog(self, num, selected=current)
-        if dlg.exec_() == QtWidgets.QDialog.Accepted:
-            sel = dlg.selected_indices()
-            self.track_manager.set_visible_channels(sel)
-            self.track_manager.draw_all_tracks()
+        # Get channel 1 selection
+        ch1_idx = self.channel1_combo.currentIndex()
+        if ch1_idx > 0:  # 0 is "None"
+            selected.append(ch1_idx - 1)
 
-            # Update channels info label
-            if len(sel) == 0:
-                self.channels_info_label.setText("No channels selected")
-                self.channels_info_label.setStyleSheet("color: orange; font-size: 11px;")
-            else:
-                self.channels_info_label.setText(f"{len(sel)} channel(s) selected")
-                self.channels_info_label.setStyleSheet("color: green; font-size: 11px;")
+        # Get channel 2 selection
+        ch2_idx = self.channel2_combo.currentIndex()
+        if ch2_idx > 0:  # 0 is "None"
+            selected.append(ch2_idx - 1)
+
+        self.track_manager.set_selected_channels(selected)
+        self.track_manager.draw_all_tracks()
+
+        # Update info label
+        if len(selected) == 0:
+            self.channels_info_label.setText("No channels selected")
+            self.channels_info_label.setStyleSheet("color: orange; font-size: 11px;")
+        else:
+            ch_names = [f"Ch {ch + 1}" for ch in selected]
+            self.channels_info_label.setText(f"Displaying: {', '.join(ch_names)}")
+            self.channels_info_label.setStyleSheet("color: green; font-size: 11px;")
+
+    def _on_resolution_changed(self, index: int):
+        """Handle resolution selector change."""
+        if self.track_manager is None:
+            return
+
+        resolution_map = {0: 'Raw', 1: 'L1', 2: 'L2', 3: 'L3'}
+        level = resolution_map.get(index, 'L2')
+        self.track_manager.set_resolution(level)
+
+    def _apply_window_duration(self):
+        """Apply the window duration from input field."""
+        try:
+            duration = float(self.window_input.text())
+            if duration <= 0:
+                duration = 1.0
+            if duration > self.total_duration:
+                duration = self.total_duration
+
+            self.time_controller.set_window_duration(duration)
+            self._update_view()
+        except ValueError:
+            pass
+
+    def _go_to_start(self):
+        """Go to start of recording."""
+        self.time_controller.go_to_start()
+        self._update_view()
+
+    def _go_to_end(self):
+        """Go to end of recording."""
+        self.time_controller.go_to_end()
+        self._update_view()
+
+    def _step_back(self):
+        """Step back by 10% of window."""
+        self.time_controller.scroll_left()
+        self._update_view()
+
+    def _step_forward(self):
+        """Step forward by 10% of window."""
+        self.time_controller.scroll_right()
+        self._update_view()
+
+    def _on_slider_changed(self, value: int):
+        """Handle time slider position changes."""
+        normalized = value / 1000.0
+        self.time_controller.set_normalized_position(normalized)
+        self._update_view(update_slider=False)
+
+    def _update_view(self, update_slider: bool = True):
+        """Update the view based on current time controller state."""
+        if self.track_manager is None:
+            return
+
+        start_time = self.time_controller.get_current_start()
+        duration = self.time_controller.get_current_duration()
+
+        # Update track
+        self.track_manager.set_view_window(start_time, duration)
+        self.track_manager.draw_all_tracks()
+
+        # Update position label
+        self.position_label.setText(
+            f"Position: {start_time:.2f}s / {self.total_duration:.2f}s"
+        )
+
+        # Update slider
+        if update_slider:
+            self.time_slider.blockSignals(True)
+            normalized = self.time_controller.get_normalized_position()
+            self.time_slider.setValue(int(normalized * 1000))
+            self.time_slider.blockSignals(False)
 
     def closeEvent(self, event):
         """Handle window close event."""

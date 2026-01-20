@@ -3,7 +3,7 @@ import pyqtgraph as pg
 
 from app.core.device import SessantaquattroPlus
 from app.ui.windows.main_window import SoundtrackWindow
-# control window not used; using built-in controls in SoundtrackWindow
+from app.ui.windows.data_analysis_window import DataAnalysisWindow
 
 
 class SelectionWindow(QtWidgets.QWidget):
@@ -46,45 +46,6 @@ class SelectionWindow(QtWidgets.QWidget):
                     break
         except Exception as e:
             print(f"[SESSION] Error saving session data from selection window: {e}")
-        
-        event.accept()
-
-
-class DataAnalysisWindow(QtWidgets.QWidget):
-    """Placeholder window for data analysis mode."""
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("Data Analysis")
-        self.setGeometry(100, 100, 800, 600)
-        
-        layout = QtWidgets.QVBoxLayout(self)
-        
-        # Back button in top left
-        back_layout = QtWidgets.QHBoxLayout()
-        self.back_button = QtWidgets.QPushButton("← Back")
-        self.back_button.setMaximumWidth(100)
-        back_layout.addWidget(self.back_button)
-        back_layout.addStretch()
-        layout.addLayout(back_layout)
-        
-        # Placeholder content
-        label = QtWidgets.QLabel("Data Analysis Mode\n\n(To be implemented)")
-        label.setStyleSheet("font-size: 18px;")
-        label.setAlignment(QtCore.Qt.AlignCenter)
-        layout.addWidget(label)
-    
-    def closeEvent(self, event):
-        """Handle window close event - ensure session data is saved."""
-        # If live_data_window exists, trigger its save functionality
-        try:
-            # Find the live data window and save its session data
-            for widget in QtWidgets.QApplication.allWidgets():
-                if hasattr(widget, 'save_session_data') and hasattr(widget, 'is_calibrated'):
-                    print("[SESSION] Saving session data from data analysis window...")
-                    widget.save_session_data()
-                    break
-        except Exception as e:
-            print(f"[SESSION] Error saving session data from data analysis window: {e}")
         
         event.accept()
 

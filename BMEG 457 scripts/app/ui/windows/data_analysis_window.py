@@ -176,6 +176,62 @@ class DataAnalysisWindow(QtWidgets.QWidget):
         self.channels_info_label.setStyleSheet("color: gray; font-size: 11px;")
         ctrl_layout.addWidget(self.channels_info_label)
 
+        ctrl_layout.addSpacing(20)
+
+        # Processing section
+        ctrl_layout.addWidget(QtWidgets.QLabel("Processing:"))
+
+        # Rectification checkbox
+        self.rectify_checkbox = QtWidgets.QCheckBox("Rectify")
+        ctrl_layout.addWidget(self.rectify_checkbox)
+
+        ctrl_layout.addSpacing(10)
+
+        # Envelope type selection
+        ctrl_layout.addWidget(QtWidgets.QLabel("Envelope:"))
+
+        self.envelope_group = QtWidgets.QButtonGroup(self)
+        self.envelope_none_radio = QtWidgets.QRadioButton("None")
+        self.envelope_rms_radio = QtWidgets.QRadioButton("RMS")
+        self.envelope_lowpass_radio = QtWidgets.QRadioButton("Lowpass")
+
+        self.envelope_none_radio.setChecked(True)
+        self.envelope_group.addButton(self.envelope_none_radio, 0)
+        self.envelope_group.addButton(self.envelope_rms_radio, 1)
+        self.envelope_group.addButton(self.envelope_lowpass_radio, 2)
+
+        ctrl_layout.addWidget(self.envelope_none_radio)
+        ctrl_layout.addWidget(self.envelope_rms_radio)
+        ctrl_layout.addWidget(self.envelope_lowpass_radio)
+
+        ctrl_layout.addSpacing(10)
+
+        # RMS window size input
+        rms_layout = QtWidgets.QHBoxLayout()
+        rms_layout.addWidget(QtWidgets.QLabel("RMS Window:"))
+        self.rms_window_input = QtWidgets.QLineEdit("50")
+        self.rms_window_input.setMaximumWidth(60)
+        self.rms_window_input.setValidator(QtGui.QIntValidator(1, 10000))
+        rms_layout.addWidget(self.rms_window_input)
+        rms_layout.addWidget(QtWidgets.QLabel("samples"))
+        ctrl_layout.addLayout(rms_layout)
+
+        # Lowpass cutoff input
+        lp_layout = QtWidgets.QHBoxLayout()
+        lp_layout.addWidget(QtWidgets.QLabel("LP Cutoff:"))
+        self.lowpass_cutoff_input = QtWidgets.QLineEdit("10")
+        self.lowpass_cutoff_input.setMaximumWidth(60)
+        self.lowpass_cutoff_input.setValidator(QtGui.QDoubleValidator(0.1, 1000, 1))
+        lp_layout.addWidget(self.lowpass_cutoff_input)
+        lp_layout.addWidget(QtWidgets.QLabel("Hz"))
+        ctrl_layout.addLayout(lp_layout)
+
+        ctrl_layout.addSpacing(10)
+
+        # Apply processing button
+        self.apply_processing_button = QtWidgets.QPushButton("Apply Processing")
+        ctrl_layout.addWidget(self.apply_processing_button)
+
         ctrl_layout.addStretch()
         content_layout.addWidget(control_panel, stretch=0)
 
@@ -200,6 +256,9 @@ class DataAnalysisWindow(QtWidgets.QWidget):
         # Channel selectors
         self.channel1_combo.currentIndexChanged.connect(self._on_channel_selection_changed)
         self.channel2_combo.currentIndexChanged.connect(self._on_channel_selection_changed)
+
+        # Processing controls
+        self.apply_processing_button.clicked.connect(self._apply_processing)
 
     def open_file_dialog(self):
         """Show file picker for CSV files."""
@@ -311,6 +370,41 @@ class DataAnalysisWindow(QtWidgets.QWidget):
             ch_names = [f"Ch {ch + 1}" for ch in selected]
             self.channels_info_label.setText(f"Displaying: {', '.join(ch_names)}")
             self.channels_info_label.setStyleSheet("color: green; font-size: 11px;")
+
+    def _apply_processing(self):
+        """Apply signal processing settings to the track."""
+        if self.track_manager is None:
+            return
+
+        # Get rectification setting
+        rectify = self.rectify_checkbox.isChecked()
+
+        # Get envelope type
+        if self.envelope_rms_radio.isChecked():
+            envelope_type = 'rms'
+        elif self.envelope_lowpass_radio.isChecked():
+            envelope_type = 'lowpass'
+        else:
+            envelope_type = 'none'
+
+        # Get RMS window size
+        try:
+            rms_window = int(self.rms_window_input.text())
+            if rms_window < 1:
+                rms_window = 1
+        except ValueError:
+            rms_window = 50
+
+        # Get lowpass cutoff
+        try:
+            lowpass_cutoff = float(self.lowpass_cutoff_input.text())
+            if lowpass_cutoff <= 0:
+                lowpass_cutoff = 10
+        except ValueError:
+            lowpass_cutoff = 10
+
+        # Apply processing
+        self.track_manager.set_processing(rectify, envelope_type, rms_window, lowpass_cutoff)
 
     def _apply_window_duration(self):
         """Apply the window duration from input field."""

@@ -2,10 +2,12 @@
 
 import numpy as np
 import pyqtgraph as pg
+from scipy import signal
+from scipy.ndimage import uniform_filter1d
 
 
 class AnalysisTrack:
-    """Single track for displaying EMG data with selectable channels."""
+    """Single track for displaying EMG data with selectable channels and processing."""
 
     # Colors for the two channels
     CHANNEL_COLORS = [
@@ -13,18 +15,27 @@ class AnalysisTrack:
         (100, 100, 255),  # Blue-ish for channel 2
     ]
 
-    def __init__(self, title, num_channels, timestamps, data):
+    def __init__(self, title, num_channels, timestamps, data, sample_rate=2000):
         """
         Args:
             title: Track title
             num_channels: Total number of channels available
             timestamps: Timestamp array
             data: Data array (channels, samples)
+            sample_rate: Sample rate in Hz
         """
         self.title = title
         self.num_channels = num_channels
         self.timestamps = timestamps
-        self.data = data
+        self.raw_data = data  # Store original data
+        self.data = data      # Processed data (may be modified)
+        self.sample_rate = sample_rate
+
+        # Processing settings
+        self.rectify = False
+        self.envelope_type = 'none'  # 'none', 'rms', 'lowpass'
+        self.rms_window = 50         # samples
+        self.lowpass_cutoff = 10     # Hz
 
         # Current view window
         self.view_start = 0.0
@@ -116,3 +127,68 @@ class AnalysisTrack:
 
     def get_selected_channels(self) -> list:
         return list(self.selected_channels)
+
+    def set_processing(self, rectify: bool, envelope_type: str,
+                       rms_window: int = 50, lowpass_cutoff: float = 10):
+        """Set processing options and recompute processed data.
+
+        Args:
+            rectify: Whether to apply full-wave rectification
+            envelope_type: 'none', 'rms', or 'lowpass'
+            rms_window: Window size in samples for RMS envelope
+            lowpass_cutoff: Cutoff frequency in Hz for lowpass filter
+        """
+        self.rectify = rectify
+        self.envelope_type = envelope_type
+        self.rms_window = rms_window
+        self.lowpass_cutoff = lowpass_cutoff
+
+        self._apply_processing()
+        self.draw()
+
+    def _apply_processing(self):
+        """Apply current processing settings to raw data."""
+        if self.raw_data is None:
+            return
+
+        data = self.raw_data.copy()
+
+        # Step 1: Rectification (if enabled)
+        if self.rectify:
+            data = np.abs(data)
+
+        # Step 2: Envelope (if selected)
+        if self.envelope_type == 'rms':
+            data = self._compute_rms_envelope(data, self.rms_window)
+        elif self.envelope_type == 'lowpass':
+            data = self._compute_lowpass_envelope(data, self.lowpass_cutoff)
+
+        self.data = data
+
+    def _compute_rms_envelope(self, data, window_size):
+        """Compute RMS envelope."""
+        result = np.zeros_like(data)
+        for ch in range(data.shape[0]):
+            squared = data[ch, :] ** 2
+            mean_squared = uniform_filter1d(squared, size=window_size, mode='nearest')
+            result[ch, :] = np.sqrt(mean_squared)
+        return result
+
+    def _compute_lowpass_envelope(self, data, cutoff_hz):
+        """Apply lowpass filter for envelope detection."""
+        if self.sample_rate <= 0:
+            return data.copy()
+
+        nyquist = self.sample_rate / 2
+        if cutoff_hz >= nyquist:
+            return data.copy()
+
+        try:
+            b, a = signal.butter(4, cutoff_hz / nyquist, btype='low')
+            result = np.zeros_like(data)
+            for ch in range(data.shape[0]):
+                result[ch, :] = signal.filtfilt(b, a, data[ch, :])
+            return result
+        except Exception as e:
+            print(f"Warning: Lowpass filter failed: {e}")
+            return data.copy()

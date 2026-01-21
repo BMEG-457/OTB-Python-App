@@ -1,8 +1,20 @@
-# RMS, MAV, ZC, WL, mean/variance, EMG feature sets.
-# 
-# IMPORTANT: This module assumes a calibration phase has been completed.
-# Calibration provides: baseline_rms, threshold, and mvc_rms for each channel.
-# These calibrated values should be passed as parameters to the analysis functions.
+"""EMG feature extraction and analysis functions.
+
+This module provides various EMG signal analysis functions including:
+- Basic features: RMS, MAV, integrated EMG
+- Contraction detection based on RMS rate of change
+- Fatigue analysis (time to fatigue via RMS and median frequency)
+- Activation timing detection
+
+IMPORTANT: Many functions assume a calibration phase has been completed.
+Calibration provides: baseline_rms, threshold, and mvc_rms for each channel.
+These calibrated values should be passed as parameters to the analysis functions.
+
+Note: These functions are implemented but not yet fully integrated into the
+main application UI. They are available for use in custom analysis scripts
+or future UI integration.
+"""
+
 from scipy.signal import spectrogram
 import numpy as np
 

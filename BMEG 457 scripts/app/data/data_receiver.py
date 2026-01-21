@@ -68,11 +68,8 @@ class DataReceiverThread(QtCore.QThread):
                     
                     # Unpack as big-endian signed shorts (16-bit)
                     unpacked_data = struct.unpack(f'>{len(data) // 2}h', data)
-                    reshaped = np.array(unpacked_data).reshape((-1, self.device.nchannels)).T
-                    
-                    # Multi-stage processing pipeline
-                    reshaped_data = reshaped
-                    
+                    reshaped_data = np.array(unpacked_data).reshape((-1, self.device.nchannels)).T
+
                     # Emit raw stage
                     try:
                         self.stage_output.emit('raw', reshaped_data.copy())

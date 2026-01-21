@@ -1,7 +1,19 @@
+"""Legacy control window - not currently integrated into main application.
+
+This module contains a simple control window with start/stop buttons.
+Kept for potential future use or reference. The main application now uses
+integrated controls in SoundtrackWindow (main_window.py).
+"""
+
 from PyQt5 import QtWidgets, QtCore
 
-# button for starting/stopping recording
+
 class ControlWindow(QtWidgets.QWidget):
+    """Legacy control window with start/stop recording buttons.
+
+    Note: This class is not currently used in the main application flow.
+    Recording controls are now integrated directly into SoundtrackWindow.
+    """
     start_clicked = QtCore.pyqtSignal()
     stop_clicked = QtCore.pyqtSignal()
 

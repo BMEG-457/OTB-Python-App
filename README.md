@@ -42,6 +42,16 @@ A PyQt5-based desktop application for real-time High-Density Surface Electromyog
 - Channel-wise data organization
 - Recording state persistence
 
+### Data Analysis Mode
+- **Post-recording analysis** of CSV files
+- **Signal processing options**:
+  - Full-wave rectification
+  - RMS envelope with configurable window size
+  - Lowpass filter envelope with configurable cutoff frequency
+- **Two-channel comparison** view for comparing signals
+- **Time navigation** with slider and configurable window duration
+- Load and visualize previously recorded EMG data
+
 ## Installation
 
 ### Prerequisites
@@ -83,7 +93,7 @@ python main.py
 
 1. **Mode Selection**
    - Choose "Live Data Viewing" for real-time EMG acquisition
-   - (Data Analysis mode in development)
+   - Choose "Data Analysis" for post-recording analysis
 
 2. **Initialize Connection**
    - Application connects to Sessantaquattro+ device
@@ -105,6 +115,22 @@ python main.py
    - Click "Start Recording" after calibration
    - Data is automatically saved to CSV on stop
    - Files saved with timestamp: `emg_recording_YYYYMMDD_HHMMSS.csv`
+
+### Data Analysis Workflow
+
+1. Select "Data Analysis" from the mode selection screen
+2. Click "Open File" to load a CSV recording from the `recordings/` folder
+3. Select up to 2 channels to display using the dropdown menus
+4. Use time navigation controls:
+   - Slider to scrub through the recording
+   - `<<` / `>>` buttons to jump to start/end
+   - `<` / `>` buttons to step through
+   - Window size input to adjust the visible time range
+5. Apply signal processing:
+   - Check "Rectify" for full-wave rectification
+   - Select envelope type: None, RMS, or Lowpass
+   - Configure RMS window size (samples) or Lowpass cutoff (Hz)
+   - Click "Apply Processing" to update the display
 
 ### Interface Tabs
 
@@ -158,6 +184,13 @@ Device settings in `BMEG 457 scripts/app/core/device.py`:
 - Channel count and layout
 - Track definitions and conversions
 
+### Data Analysis Processing Parameters
+
+Configure in the Data Analysis window UI:
+- **RMS Window Size**: Number of samples for RMS envelope calculation (default: 50)
+- **Lowpass Cutoff**: Cutoff frequency in Hz for lowpass envelope filter (default: 10 Hz)
+- **Rectification**: Toggle full-wave rectification before envelope processing
+
 ## Architecture
 
 ### Project Structure
@@ -169,28 +202,35 @@ BMEG 457 scripts/
 │   ├── core/              # Core classes
 │   │   ├── config.py      # Configuration constants
 │   │   ├── device.py      # Device abstraction
-│   │   └── track.py       # Signal track visualization
+│   │   ├── track.py       # Signal track visualization (live mode)
+│   │   └── analysis_track.py  # Static data visualization (analysis mode)
 │   │
 │   ├── data/              # Data handling
-│   │   └── data_receiver.py  # Thread for device communication
+│   │   ├── data_receiver.py  # Thread for device communication
+│   │   └── csv_loader.py     # CSV file loading for analysis
 │   │
 │   ├── managers/          # Business logic
-│   │   ├── recording_manager.py    # Recording & CSV export
-│   │   ├── streaming_controller.py # Live streaming control
-│   │   └── track_manager.py        # Track management
+│   │   ├── recording_manager.py       # Recording & CSV export
+│   │   ├── streaming_controller.py    # Live streaming control
+│   │   ├── track_manager.py           # Track management (live mode)
+│   │   ├── analysis_track_manager.py  # Track management (analysis mode)
+│   │   └── time_navigation_controller.py  # Time scrubbing for analysis
 │   │
 │   ├── processing/        # Signal processing
-│   │   ├── features.py    # EMG feature extraction
+│   │   ├── features.py    # EMG feature extraction (future UI integration)
 │   │   ├── filters.py     # Signal filters
 │   │   ├── pipeline.py    # Processing pipeline framework
-│   │   └── transforms.py  # FFT and other transforms
+│   │   └── transforms.py  # FFT and other transforms (future expansion)
 │   │
 │   └── ui/                # User interface
 │       ├── dialogs/       # Calibration, channel selection
 │       ├── tabs/          # Tab implementations
-│       └── windows/       # Main application window
+│       └── windows/       # Application windows
+│           ├── main_window.py         # Live streaming window
+│           └── data_analysis_window.py # Data analysis window
 │
-└── data/                  # Recorded data and test files
+├── recordings/            # Saved CSV recordings
+└── data/                  # Test data and session files
 ```
 
 ### Key Design Patterns

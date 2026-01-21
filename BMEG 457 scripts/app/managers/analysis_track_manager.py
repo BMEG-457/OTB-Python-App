@@ -5,12 +5,12 @@ from app.core.analysis_track import AnalysisTrack
 
 
 class AnalysisTrackManager:
-    """Manages track for data analysis mode - creates track from CSV data."""
+    """Manages a single track for data analysis mode."""
 
     def __init__(self, scroll_layout):
         self.scroll_layout = scroll_layout
 
-        # Track storage - single track for HDsEMG
+        # Single track
         self.track = None
         self.track_container = None
 
@@ -22,34 +22,35 @@ class AnalysisTrackManager:
         self.view_duration = 1.0
 
     def initialize_tracks_from_csv(self, csv_loader):
-        """Create track from loaded CSV data with multi-resolution support.
+        """Create a single track from loaded CSV data.
 
         Args:
-            csv_loader: CSVDataLoader instance with loaded and preprocessed data
+            csv_loader: CSVDataLoader instance with loaded data
         """
         self.csv_loader = csv_loader
         self._clear_tracks()
 
         num_channels = min(64, csv_loader.get_channel_count())
+        timestamps = csv_loader.timestamps
+        raw_data = csv_loader.data[:num_channels, :]
 
-        # Get resolution data from loader
-        resolution_data = csv_loader.resolution_data
-
-        # Create track container
-        self.track_container = QtWidgets.QWidget()
-        layout = QtWidgets.QVBoxLayout(self.track_container)
-
-        # Create track with multi-resolution data
+        # Create single track
         self.track = AnalysisTrack(
-            f"HDsEMG {num_channels} channels",
+            "EMG Data",
             num_channels,
-            resolution_data
+            timestamps,
+            raw_data
         )
 
-        self.track.plot_widget.setMinimumHeight(500)
-        layout.addWidget(self.track.plot_widget)
-        self.scroll_layout.addWidget(self.track_container)
+        # Add track to the scroll layout
+        self.track_container = QtWidgets.QWidget()
+        layout = QtWidgets.QVBoxLayout(self.track_container)
+        layout.setContentsMargins(0, 0, 0, 5)
 
+        self.track.plot_widget.setMinimumHeight(400)
+        layout.addWidget(self.track.plot_widget)
+
+        self.scroll_layout.addWidget(self.track_container)
         self.scroll_layout.addStretch()
 
         # Apply initial view (full duration)
@@ -58,12 +59,12 @@ class AnalysisTrackManager:
 
     def _clear_tracks(self):
         """Clear existing track and container."""
-        if self.track_container is not None:
+        if self.track_container:
             self.track_container.setParent(None)
             self.track_container.deleteLater()
 
-        self.track = None
         self.track_container = None
+        self.track = None
 
         # Clear stretch items from layout
         while self.scroll_layout.count() > 0:
@@ -88,27 +89,6 @@ class AnalysisTrackManager:
         """Draw the track with current view settings."""
         if self.track:
             self.track.draw()
-
-    def set_resolution(self, level: str):
-        """Set resolution level for display.
-
-        Args:
-            level: Resolution level name ('Raw', 'L1', 'L2', 'L3')
-        """
-        if self.track:
-            self.track.set_resolution(level)
-
-    def get_current_resolution(self) -> str:
-        """Get current resolution level."""
-        if self.track:
-            return self.track.get_current_resolution()
-        return 'L2'
-
-    def get_available_resolutions(self) -> list:
-        """Get list of available resolution levels."""
-        if self.csv_loader:
-            return self.csv_loader.get_available_resolutions()
-        return []
 
     def get_channel_count(self):
         """Get number of channels available."""

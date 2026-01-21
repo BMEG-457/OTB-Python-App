@@ -130,15 +130,6 @@ class DataAnalysisWindow(QtWidgets.QWidget):
         self.apply_window_button.setMaximumWidth(60)
         time_layout.addWidget(self.apply_window_button)
 
-        time_layout.addSpacing(20)
-
-        # Resolution selector
-        time_layout.addWidget(QtWidgets.QLabel("Resolution:"))
-        self.resolution_combo = QtWidgets.QComboBox()
-        self.resolution_combo.addItems(['Raw (2000 Hz)', 'L1 (500 Hz)', 'L2 (200 Hz)', 'L3 (50 Hz)'])
-        self.resolution_combo.setCurrentIndex(2)  # Default to L2
-        time_layout.addWidget(self.resolution_combo)
-
         self.main_layout.addWidget(time_row)
 
     def _create_main_content(self):
@@ -205,9 +196,6 @@ class DataAnalysisWindow(QtWidgets.QWidget):
         # Window controls
         self.apply_window_button.clicked.connect(self._apply_window_duration)
         self.window_input.returnPressed.connect(self._apply_window_duration)
-
-        # Resolution selector
-        self.resolution_combo.currentIndexChanged.connect(self._on_resolution_changed)
 
         # Channel selectors
         self.channel1_combo.currentIndexChanged.connect(self._on_channel_selection_changed)
@@ -276,18 +264,6 @@ class DataAnalysisWindow(QtWidgets.QWidget):
         self.channels_info_label.setText("Select up to 2 channels to display")
         self.channels_info_label.setStyleSheet("color: orange; font-size: 11px;")
 
-        # Show info message
-        QtWidgets.QMessageBox.information(
-            self, "File Loaded",
-            f"Loaded {channels} channels with multi-resolution preprocessing.\n\n"
-            f"Resolutions available:\n"
-            f"  • Raw: {sample_rate:.0f} Hz\n"
-            f"  • L1: 500 Hz\n"
-            f"  • L2: 200 Hz\n"
-            f"  • L3: 50 Hz\n\n"
-            f"Select up to 2 channels to display."
-        )
-
     def _populate_channel_selectors(self, num_channels: int):
         """Populate channel selector dropdowns."""
         # Block signals while populating
@@ -335,15 +311,6 @@ class DataAnalysisWindow(QtWidgets.QWidget):
             ch_names = [f"Ch {ch + 1}" for ch in selected]
             self.channels_info_label.setText(f"Displaying: {', '.join(ch_names)}")
             self.channels_info_label.setStyleSheet("color: green; font-size: 11px;")
-
-    def _on_resolution_changed(self, index: int):
-        """Handle resolution selector change."""
-        if self.track_manager is None:
-            return
-
-        resolution_map = {0: 'Raw', 1: 'L1', 2: 'L2', 3: 'L3'}
-        level = resolution_map.get(index, 'L2')
-        self.track_manager.set_resolution(level)
 
     def _apply_window_duration(self):
         """Apply the window duration from input field."""

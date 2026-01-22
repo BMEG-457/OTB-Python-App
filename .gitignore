@@ -138,4 +138,5 @@ htmlcov/
 
 # Optional: Large data caches or local runtime files (uncomment if needed)
 data/
+!BMEG 457 scripts/app/data/
 ## recordings/

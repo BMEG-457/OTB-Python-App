@@ -1,2 +1,2 @@
 timestamp,default_plot_time,update_rate,plot_height,window_width,window_height,is_calibrated,baseline_rms_mean,baseline_rms_std,threshold_mean,threshold_std,mvc_rms_mean,mvc_rms_std,num_channels,baseline_rms_values,threshold_values,mvc_rms_values
-2026-01-20 17:56:26,1,16,600,1200,800,False,,,,,,,,,,
+2026-01-26 21:19:12,1,16,600,1200,800,False,,,,,,,,,,

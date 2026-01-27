@@ -133,11 +133,27 @@ class DataAnalysisWindow(QtWidgets.QWidget):
         self.main_layout.addWidget(time_row)
 
     def _create_main_content(self):
-        """Create main content area with plot and control panel."""
+        """Create main content area with shared plot and tabbed control panels."""
         content_widget = QtWidgets.QWidget()
         content_layout = QtWidgets.QHBoxLayout(content_widget)
 
-        # Scroll area for the track
+        # Shared scroll area for the plot (visible in all tabs)
+        self._create_shared_plot_area(content_layout)
+
+        # Tab widget for control panels only (right side)
+        self.content_tabs = QtWidgets.QTabWidget()
+        self.content_tabs.setMaximumWidth(250)
+
+        # Create control panels as tabs
+        self._create_data_viewing_controls()
+        self._create_features_controls()
+
+        content_layout.addWidget(self.content_tabs, stretch=0)
+
+        self.main_layout.addWidget(content_widget)
+
+    def _create_shared_plot_area(self, parent_layout):
+        """Create the shared scroll area for plots (visible in all tabs)."""
         self.scroll_area = QtWidgets.QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
@@ -146,9 +162,10 @@ class DataAnalysisWindow(QtWidgets.QWidget):
         self.scroll_widget = QtWidgets.QWidget()
         self.scroll_layout = QtWidgets.QVBoxLayout(self.scroll_widget)
         self.scroll_area.setWidget(self.scroll_widget)
-        content_layout.addWidget(self.scroll_area, stretch=3)
+        parent_layout.addWidget(self.scroll_area, stretch=3)
 
-        # Right-side control panel
+    def _create_data_viewing_controls(self):
+        """Create the Data Viewing control panel."""
         control_panel = QtWidgets.QWidget()
         ctrl_layout = QtWidgets.QVBoxLayout(control_panel)
 
@@ -233,9 +250,69 @@ class DataAnalysisWindow(QtWidgets.QWidget):
         ctrl_layout.addWidget(self.apply_processing_button)
 
         ctrl_layout.addStretch()
-        content_layout.addWidget(control_panel, stretch=0)
 
-        self.main_layout.addWidget(content_widget)
+        self.content_tabs.addTab(control_panel, "Data Viewing")
+
+    def _create_features_controls(self):
+        """Create the Features control panel."""
+        features_control_panel = QtWidgets.QWidget()
+        features_ctrl_layout = QtWidgets.QVBoxLayout(features_control_panel)
+
+        # Features section header
+        features_ctrl_layout.addWidget(QtWidgets.QLabel("Add Features:"))
+        features_ctrl_layout.addSpacing(10)
+
+        # Time Domain Features
+        features_ctrl_layout.addWidget(QtWidgets.QLabel("Time Domain:"))
+
+        self.feature_rms_button = QtWidgets.QPushButton("RMS")
+        self.feature_mav_button = QtWidgets.QPushButton("MAV")
+        self.feature_var_button = QtWidgets.QPushButton("Variance")
+        self.feature_wl_button = QtWidgets.QPushButton("Waveform Length")
+        self.feature_zc_button = QtWidgets.QPushButton("Zero Crossings")
+        self.feature_ssc_button = QtWidgets.QPushButton("Slope Sign Changes")
+
+        features_ctrl_layout.addWidget(self.feature_rms_button)
+        features_ctrl_layout.addWidget(self.feature_mav_button)
+        features_ctrl_layout.addWidget(self.feature_var_button)
+        features_ctrl_layout.addWidget(self.feature_wl_button)
+        features_ctrl_layout.addWidget(self.feature_zc_button)
+        features_ctrl_layout.addWidget(self.feature_ssc_button)
+
+        features_ctrl_layout.addSpacing(15)
+
+        # Frequency Domain Features
+        features_ctrl_layout.addWidget(QtWidgets.QLabel("Frequency Domain:"))
+
+        self.feature_mnf_button = QtWidgets.QPushButton("Mean Frequency")
+        self.feature_mdf_button = QtWidgets.QPushButton("Median Frequency")
+        self.feature_psd_button = QtWidgets.QPushButton("Power Spectral Density")
+
+        features_ctrl_layout.addWidget(self.feature_mnf_button)
+        features_ctrl_layout.addWidget(self.feature_mdf_button)
+        features_ctrl_layout.addWidget(self.feature_psd_button)
+
+        features_ctrl_layout.addSpacing(15)
+
+        # Other Features
+        features_ctrl_layout.addWidget(QtWidgets.QLabel("Other:"))
+
+        self.feature_custom_button = QtWidgets.QPushButton("Custom Feature...")
+        features_ctrl_layout.addWidget(self.feature_custom_button)
+
+        features_ctrl_layout.addSpacing(20)
+
+        # Calculate and Clear buttons
+        self.calculate_features_button = QtWidgets.QPushButton("Calculate Selected")
+        self.calculate_features_button.setStyleSheet("font-weight: bold;")
+        self.clear_features_button = QtWidgets.QPushButton("Clear All")
+
+        features_ctrl_layout.addWidget(self.calculate_features_button)
+        features_ctrl_layout.addWidget(self.clear_features_button)
+
+        features_ctrl_layout.addStretch()
+
+        self.content_tabs.addTab(features_control_panel, "Features")
 
     def _connect_signals(self):
         """Connect all UI signals to handlers."""

@@ -37,7 +37,7 @@ def lowpass_filter(data, cutoff, fs, order=4):
     return filtfilt(b, a, data)
 
 # Load CSV
-filename = 'C:\\Users\\Nicholas\\Downloads\\15_01_26_recordings\\recordings\\ellie\\recording_20260115_122054.csv'
+filename = 'BMEG 457 scripts\\tests\\recording_20260115_122309.csv'
 # Read CSV with header, strip whitespace from headers, and coerce non-numeric data to NaN
 df = pd.read_csv(filename, header=0, low_memory=False)
 df.columns = df.columns.str.strip()  # Remove any whitespace from column names

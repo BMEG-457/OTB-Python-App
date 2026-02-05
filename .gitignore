@@ -137,6 +137,7 @@ htmlcov/
 *.log
 
 # Optional: Large data caches or local runtime files (uncomment if needed)
+previous_session.csv
 data/
 !BMEG 457 scripts/app/data/
 ## recordings/

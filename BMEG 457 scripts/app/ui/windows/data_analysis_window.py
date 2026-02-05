@@ -6,6 +6,7 @@ import os
 from app.data.csv_loader import CSVDataLoader
 from app.managers.analysis_track_manager import AnalysisTrackManager
 from app.managers.time_navigation_controller import TimeNavigationController
+from app.processing.features import compute_tkeo_activation_timing
 
 
 class DataAnalysisWindow(QtWidgets.QWidget):
@@ -133,12 +134,17 @@ class DataAnalysisWindow(QtWidgets.QWidget):
         self.main_layout.addWidget(time_row)
 
     def _create_main_content(self):
-        """Create main content area with shared plot and tabbed control panels."""
-        content_widget = QtWidgets.QWidget()
-        content_layout = QtWidgets.QHBoxLayout(content_widget)
+        """Create main content area with shared plot, tabbed control panels, and results panel."""
+        # Vertical splitter: plot area on top, results panel on bottom
+        splitter = QtWidgets.QSplitter(QtCore.Qt.Vertical)
+
+        # Top section: plot + control tabs side by side
+        top_widget = QtWidgets.QWidget()
+        top_layout = QtWidgets.QHBoxLayout(top_widget)
+        top_layout.setContentsMargins(0, 0, 0, 0)
 
         # Shared scroll area for the plot (visible in all tabs)
-        self._create_shared_plot_area(content_layout)
+        self._create_shared_plot_area(top_layout)
 
         # Tab widget for control panels only (right side)
         self.content_tabs = QtWidgets.QTabWidget()
@@ -148,9 +154,17 @@ class DataAnalysisWindow(QtWidgets.QWidget):
         self._create_data_viewing_controls()
         self._create_features_controls()
 
-        content_layout.addWidget(self.content_tabs, stretch=0)
+        top_layout.addWidget(self.content_tabs, stretch=0)
+        splitter.addWidget(top_widget)
 
-        self.main_layout.addWidget(content_widget)
+        # Bottom section: results panel
+        self._create_results_panel(splitter)
+
+        # Set initial split ratio (plot gets ~80%, results ~20%)
+        splitter.setStretchFactor(0, 4)
+        splitter.setStretchFactor(1, 1)
+
+        self.main_layout.addWidget(splitter)
 
     def _create_shared_plot_area(self, parent_layout):
         """Create the shared scroll area for plots (visible in all tabs)."""
@@ -258,61 +272,38 @@ class DataAnalysisWindow(QtWidgets.QWidget):
         features_control_panel = QtWidgets.QWidget()
         features_ctrl_layout = QtWidgets.QVBoxLayout(features_control_panel)
 
-        # Features section header
-        features_ctrl_layout.addWidget(QtWidgets.QLabel("Add Features:"))
-        features_ctrl_layout.addSpacing(10)
-
-        # Time Domain Features
-        features_ctrl_layout.addWidget(QtWidgets.QLabel("Time Domain:"))
-
-        self.feature_rms_button = QtWidgets.QPushButton("RMS")
-        self.feature_mav_button = QtWidgets.QPushButton("MAV")
-        self.feature_var_button = QtWidgets.QPushButton("Variance")
-        self.feature_wl_button = QtWidgets.QPushButton("Waveform Length")
-        self.feature_zc_button = QtWidgets.QPushButton("Zero Crossings")
-        self.feature_ssc_button = QtWidgets.QPushButton("Slope Sign Changes")
-
-        features_ctrl_layout.addWidget(self.feature_rms_button)
-        features_ctrl_layout.addWidget(self.feature_mav_button)
-        features_ctrl_layout.addWidget(self.feature_var_button)
-        features_ctrl_layout.addWidget(self.feature_wl_button)
-        features_ctrl_layout.addWidget(self.feature_zc_button)
-        features_ctrl_layout.addWidget(self.feature_ssc_button)
-
-        features_ctrl_layout.addSpacing(15)
-
-        # Frequency Domain Features
-        features_ctrl_layout.addWidget(QtWidgets.QLabel("Frequency Domain:"))
-
-        self.feature_mnf_button = QtWidgets.QPushButton("Mean Frequency")
-        self.feature_mdf_button = QtWidgets.QPushButton("Median Frequency")
-        self.feature_psd_button = QtWidgets.QPushButton("Power Spectral Density")
-
-        features_ctrl_layout.addWidget(self.feature_mnf_button)
-        features_ctrl_layout.addWidget(self.feature_mdf_button)
-        features_ctrl_layout.addWidget(self.feature_psd_button)
-
-        features_ctrl_layout.addSpacing(15)
-
-        # Other Features
-        features_ctrl_layout.addWidget(QtWidgets.QLabel("Other:"))
-
-        self.feature_custom_button = QtWidgets.QPushButton("Custom Feature...")
-        features_ctrl_layout.addWidget(self.feature_custom_button)
-
-        features_ctrl_layout.addSpacing(20)
-
-        # Calculate and Clear buttons
-        self.calculate_features_button = QtWidgets.QPushButton("Calculate Selected")
-        self.calculate_features_button.setStyleSheet("font-weight: bold;")
-        self.clear_features_button = QtWidgets.QPushButton("Clear All")
-
-        features_ctrl_layout.addWidget(self.calculate_features_button)
-        features_ctrl_layout.addWidget(self.clear_features_button)
+        self.activation_timings_button = QtWidgets.QPushButton("Activation Timings")
+        features_ctrl_layout.addWidget(self.activation_timings_button)
 
         features_ctrl_layout.addStretch()
 
         self.content_tabs.addTab(features_control_panel, "Features")
+
+    def _create_results_panel(self, parent_splitter):
+        """Create the bottom results panel."""
+        results_widget = QtWidgets.QWidget()
+        results_layout = QtWidgets.QVBoxLayout(results_widget)
+        results_layout.setContentsMargins(5, 2, 5, 2)
+
+        header_layout = QtWidgets.QHBoxLayout()
+        header_layout.addWidget(QtWidgets.QLabel("Results"))
+        self.clear_results_button = QtWidgets.QPushButton("Clear")
+        self.clear_results_button.setMaximumWidth(60)
+        self.clear_results_button.clicked.connect(lambda: self.feature_results_text.clear())
+        header_layout.addStretch()
+        header_layout.addWidget(self.clear_results_button)
+        results_layout.addLayout(header_layout)
+
+        self.feature_results_text = QtWidgets.QTextEdit()
+        self.feature_results_text.setReadOnly(True)
+        self.feature_results_text.setStyleSheet(
+            "QTextEdit { font-family: Consolas, monospace; font-size: 11px; "
+            "background-color: #1e1e1e; color: #d4d4d4; }"
+        )
+        self.feature_results_text.setPlaceholderText("Feature results will appear here...")
+        results_layout.addWidget(self.feature_results_text)
+
+        parent_splitter.addWidget(results_widget)
 
     def _connect_signals(self):
         """Connect all UI signals to handlers."""
@@ -336,6 +327,9 @@ class DataAnalysisWindow(QtWidgets.QWidget):
 
         # Processing controls
         self.apply_processing_button.clicked.connect(self._apply_processing)
+
+        # Feature controls
+        self.activation_timings_button.clicked.connect(self._on_activation_timings)
 
     def open_file_dialog(self):
         """Show file picker for CSV files."""
@@ -482,6 +476,80 @@ class DataAnalysisWindow(QtWidgets.QWidget):
 
         # Apply processing
         self.track_manager.set_processing(rectify, envelope_type, rms_window, lowpass_cutoff)
+
+    def _on_activation_timings(self):
+        """Compute TKEO activation timings on selected channel(s) and add feature tracks."""
+        if self.csv_loader is None or not self.csv_loader.is_loaded():
+            QtWidgets.QMessageBox.warning(self, "No Data", "Please load a CSV file first.")
+            return
+
+        if self.track_manager is None:
+            QtWidgets.QMessageBox.warning(self, "No Data", "Please load a CSV file first.")
+            return
+
+        selected = self.track_manager.get_selected_channels()
+        if len(selected) == 0:
+            QtWidgets.QMessageBox.warning(
+                self, "No Channel Selected",
+                "Please select at least one channel in the Data Viewing tab."
+            )
+            return
+
+        # Clear previous feature tracks and results
+        self.track_manager.remove_feature_tracks()
+        self.feature_results_text.clear()
+
+        raw_data = self.csv_loader.data
+        timestamps = self.csv_loader.timestamps
+        sample_rate = self.csv_loader.sample_rate
+        base_time = timestamps[0]
+
+        errors = []
+        results_text_parts = []
+        for ch_idx in selected:
+            ch_signal = raw_data[ch_idx, :]
+
+            result = compute_tkeo_activation_timing(
+                raw_signal=ch_signal,
+                timestamps=timestamps,
+                sample_rate=sample_rate,
+            )
+
+            if result is None:
+                errors.append(f"Channel {ch_idx + 1}")
+                continue
+
+            title = f"TKEO Activation - Ch {ch_idx + 1} ({len(result.onset_times)} onsets)"
+            self.track_manager.add_feature_track(
+                title=title,
+                timestamps=result.timestamps,
+                data_1d=result.tkeo_envelope,
+                sample_rate=result.sample_rate,
+                onset_times=result.onset_times,
+                detection_threshold=result.detection_threshold,
+                backtrack_threshold=result.backtrack_threshold,
+            )
+
+            # Build results text for this channel
+            lines = [f"Channel {ch_idx + 1}: {len(result.onset_times)} onsets"]
+            for i, t in enumerate(result.onset_times):
+                relative_t = t - base_time
+                lines.append(f"  #{i + 1}  {relative_t:.3f}s")
+            results_text_parts.append("\n".join(lines))
+
+        if results_text_parts:
+            self.feature_results_text.setText("\n\n".join(results_text_parts))
+        else:
+            self.feature_results_text.setText("No onsets detected.")
+
+        if errors:
+            QtWidgets.QMessageBox.warning(
+                self, "Processing Warning",
+                f"TKEO computation failed for: {', '.join(errors)}.\n"
+                "The signal may be too short or contain invalid data."
+            )
+
+        self._update_view()
 
     def _apply_window_duration(self):
         """Apply the window duration from input field."""

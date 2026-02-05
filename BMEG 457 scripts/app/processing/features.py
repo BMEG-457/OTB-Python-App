@@ -15,7 +15,9 @@ main application UI. They are available for use in custom analysis scripts
 or future UI integration.
 """
 
-from scipy.signal import spectrogram
+from scipy.signal import spectrogram, butter, filtfilt, find_peaks
+from dataclasses import dataclass
+from typing import Optional
 import numpy as np
 
 def rms(data):
@@ -236,4 +238,157 @@ def activation_timing_live(rms, baseline_threshold):
     return False
 
 # muscle cocontraction - RETURNS COACTIVATION INDEX BETWEEN TWO MUSCLES
+
+
+@dataclass
+class TKEOResult:
+    """Results from TKEO-based activation timing detection."""
+    timestamps: np.ndarray
+    tkeo_envelope: np.ndarray
+    onset_times: np.ndarray
+    onset_indices: np.ndarray
+    detection_threshold: float
+    backtrack_threshold: float
+    sample_rate: float
+
+
+def compute_tkeo_activation_timing(
+    raw_signal: np.ndarray,
+    timestamps: np.ndarray,
+    sample_rate: float,
+    bandpass_low: float = 20.0,
+    bandpass_high: float = 450.0,
+    smooth_cutoff: float = 10.0,
+    baseline_duration: float = 0.5,
+    k_threshold: float = 8.0,
+    amplitude_divisor: float = 4.0,
+    min_peak_distance_sec: float = 0.5,
+    backtrack_k: float = 3.0,
+) -> Optional[TKEOResult]:
+    """Detect muscle activation onsets using the Teager-Kaiser Energy Operator (TKEO).
+
+    Takes raw single-channel EMG data, applies full preprocessing pipeline
+    (timestamp cleanup, bandpass filter, TKEO, smoothing), and detects onsets
+    via statistical thresholding with backtracking.
+
+    Parameters:
+        raw_signal: 1D raw EMG signal
+        timestamps: 1D timestamp array (same length as raw_signal)
+        sample_rate: Estimated sample rate in Hz (used as fallback)
+        bandpass_low: Bandpass filter low cutoff (Hz)
+        bandpass_high: Bandpass filter high cutoff (Hz)
+        smooth_cutoff: Lowpass cutoff for TKEO envelope smoothing (Hz)
+        baseline_duration: Duration of quiet baseline period at start (seconds)
+        k_threshold: Multiplier for baseline std in detection threshold
+        amplitude_divisor: Divisor for amplitude-based threshold (max/divisor)
+        min_peak_distance_sec: Minimum distance between detected peaks (seconds)
+        backtrack_k: Multiplier for baseline std in backtrack threshold
+
+    Returns:
+        TKEOResult with envelope, onset times, and thresholds, or None on failure.
+    """
+    try:
+        signal = raw_signal.copy()
+        ts = timestamps.copy()
+
+        # --- Timestamp preprocessing ---
+        # Remove NaN entries
+        mask = ~(np.isnan(ts) | np.isnan(signal))
+        ts = ts[mask]
+        signal = signal[mask]
+
+        if len(ts) < 30:
+            return None
+
+        # Interpolate duplicated timestamps
+        unique, counts = np.unique(ts, return_counts=True)
+        if len(set(counts)) == 1 and counts[0] > 1:
+            n_repeats = counts[0]
+            new_ts = []
+            for i in range(len(unique) - 1):
+                interp = np.linspace(unique[i], unique[i + 1], n_repeats, endpoint=False)
+                new_ts.extend(interp)
+            last_interval = unique[-1] - unique[-2] if len(unique) > 1 else 1.0
+            last_group = np.linspace(unique[-1], unique[-1] + last_interval, n_repeats, endpoint=False)
+            new_ts.extend(last_group)
+            ts = np.array(new_ts)
+
+        # Enforce strictly increasing timestamps
+        inc_mask = np.diff(ts, prepend=ts[0]) > 0
+        ts = ts[inc_mask]
+        signal = signal[inc_mask]
+
+        if len(ts) < 30 or np.all(np.diff(ts) == 0):
+            return None
+
+        # Re-estimate sample rate from cleaned timestamps
+        dt = np.diff(ts)
+        dt = dt[dt > 0]
+        if len(dt) == 0 or np.median(dt) == 0:
+            return None
+        fs = 1.0 / np.median(np.diff(ts))
+
+        # --- Bandpass filter (20-450 Hz) ---
+        nyq = 0.5 * fs
+        if bandpass_high >= nyq:
+            bandpass_high = nyq * 0.95
+        b, a = butter(4, [bandpass_low / nyq, bandpass_high / nyq], btype='band')
+        filtered = filtfilt(b, a, signal)
+
+        # --- Compute TKEO ---
+        tkeo = np.zeros(len(filtered))
+        tkeo[1:-1] = filtered[1:-1] ** 2 - filtered[:-2] * filtered[2:]
+        tkeo[0] = tkeo[1]
+        tkeo[-1] = tkeo[-2]
+
+        # --- Rectify ---
+        tkeo_rect = np.abs(tkeo)
+
+        # --- Smooth with lowpass filter ---
+        b_lp, a_lp = butter(4, smooth_cutoff / nyq, btype='low')
+        envelope = filtfilt(b_lp, a_lp, tkeo_rect)
+
+        # --- Baseline from first baseline_duration seconds ---
+        baseline_mask = ts <= (ts[0] + baseline_duration)
+        baseline_data = envelope[baseline_mask]
+        if len(baseline_data) == 0:
+            baseline_data = envelope[:int(fs * baseline_duration)]
+        baseline_mean = np.mean(baseline_data)
+        baseline_std = np.std(baseline_data)
+
+        # --- Detection threshold ---
+        stat_threshold = baseline_mean + k_threshold * baseline_std
+        amp_threshold = np.max(envelope) / amplitude_divisor
+        final_threshold = max(stat_threshold, amp_threshold)
+
+        # --- Find peaks above threshold ---
+        min_dist_samples = int(min_peak_distance_sec * fs)
+        peak_indices, _ = find_peaks(envelope, height=final_threshold, distance=min_dist_samples)
+
+        # --- Backtrack to find true onset ---
+        onset_threshold_low = baseline_mean + backtrack_k * baseline_std
+        onset_indices = []
+        for peak_idx in peak_indices:
+            i = peak_idx
+            while i > 0 and envelope[i] > onset_threshold_low:
+                i -= 1
+            onset_indices.append(i)
+
+        # Deduplicate: multiple peaks can backtrack to the same onset
+        onset_indices = np.unique(np.array(onset_indices))
+        onset_times = ts[onset_indices] if len(onset_indices) > 0 else np.array([])
+
+        return TKEOResult(
+            timestamps=ts,
+            tkeo_envelope=envelope,
+            onset_times=onset_times,
+            onset_indices=onset_indices,
+            detection_threshold=final_threshold,
+            backtrack_threshold=onset_threshold_low,
+            sample_rate=fs,
+        )
+
+    except Exception as e:
+        print(f"[Features] TKEO activation timing failed: {e}")
+        return None
 

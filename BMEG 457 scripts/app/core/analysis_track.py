@@ -2,6 +2,7 @@
 
 import numpy as np
 import pyqtgraph as pg
+from PyQt5 import QtCore
 from scipy import signal
 from scipy.ndimage import uniform_filter1d
 
@@ -67,6 +68,10 @@ class AnalysisTrack:
             curve.hide()
             self.curves.append(curve)
 
+        # Onset markers (vertical lines) and threshold lines (horizontal)
+        self.onset_markers = []
+        self.threshold_lines = []
+
     def set_view_window(self, start_time: float, duration: float):
         """Set the current view window."""
         self.view_start = start_time
@@ -119,7 +124,10 @@ class AnalysisTrack:
         for curve_idx, curve in enumerate(self.curves):
             if curve_idx < len(self.selected_channels):
                 ch_num = self.selected_channels[curve_idx] + 1
-                curve.setData(name=f"Channel {ch_num}")
+                label = f"Channel {ch_num}"
+                self.legend.removeItem(curve)
+                curve.opts['name'] = label
+                self.legend.addItem(curve, label)
             else:
                 curve.hide()
 
@@ -192,3 +200,54 @@ class AnalysisTrack:
         except Exception as e:
             print(f"Warning: Lowpass filter failed: {e}")
             return data.copy()
+
+    def add_onset_markers(self, onset_times: np.ndarray, base_time: float):
+        """Add vertical line markers at detected onset times.
+
+        Args:
+            onset_times: Array of absolute onset timestamps
+            base_time: Base timestamp (timestamps[0]) for converting to relative time
+        """
+        self.clear_markers()
+        for t in onset_times:
+            relative_t = t - base_time
+            line = pg.InfiniteLine(
+                pos=relative_t,
+                angle=90,
+                pen=pg.mkPen(color=(255, 0, 0), width=2, style=QtCore.Qt.DashLine),
+            )
+            self.plot_widget.addItem(line)
+            self.onset_markers.append(line)
+
+    def add_threshold_lines(self, detection_threshold: float, backtrack_threshold: float):
+        """Add horizontal threshold lines.
+
+        Args:
+            detection_threshold: Main detection threshold value
+            backtrack_threshold: Lower backtrack threshold value
+        """
+        det_line = pg.InfiniteLine(
+            pos=detection_threshold,
+            angle=0,
+            pen=pg.mkPen(color=(255, 165, 0), width=1.5, style=QtCore.Qt.SolidLine),
+        )
+        self.plot_widget.addItem(det_line)
+        self.threshold_lines.append(det_line)
+
+        bt_line = pg.InfiniteLine(
+            pos=backtrack_threshold,
+            angle=0,
+            pen=pg.mkPen(color=(255, 255, 0), width=1, style=QtCore.Qt.DashLine),
+        )
+        self.plot_widget.addItem(bt_line)
+        self.threshold_lines.append(bt_line)
+
+    def clear_markers(self):
+        """Remove all onset markers and threshold lines."""
+        for line in self.onset_markers:
+            self.plot_widget.removeItem(line)
+        self.onset_markers.clear()
+
+        for line in self.threshold_lines:
+            self.plot_widget.removeItem(line)
+        self.threshold_lines.clear()

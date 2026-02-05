@@ -252,6 +252,15 @@ class TKEOResult:
     sample_rate: float
 
 
+@dataclass
+class BurstDurationResult:
+    """Results from burst duration analysis."""
+    num_bursts: int
+    avg_duration: float
+    std_duration: float
+    burst_durations: np.ndarray
+
+
 def compute_tkeo_activation_timing(
     raw_signal: np.ndarray,
     timestamps: np.ndarray,
@@ -390,5 +399,162 @@ def compute_tkeo_activation_timing(
 
     except Exception as e:
         print(f"[Features] TKEO activation timing failed: {e}")
+        return None
+
+
+def compute_burst_duration(
+    raw_signal: np.ndarray,
+    timestamps: np.ndarray,
+    sample_rate: float,
+    bandpass_low: float = 20.0,
+    bandpass_high: float = 450.0,
+    smooth_cutoff: float = 10.0,
+    baseline_duration: float = 0.5,
+    k_threshold: float = 8.0,
+    amplitude_divisor: float = 4.0,
+    backtrack_k: float = 3.0,
+    min_burst_duration: float = 0.05,
+) -> Optional[BurstDurationResult]:
+    """Detect EMG bursts via TKEO and compute their duration statistics.
+
+    Uses the same TKEO-based detection pipeline as activation timings to
+    identify burst onsets and offsets, then computes duration statistics.
+
+    Parameters:
+        raw_signal: 1D raw EMG signal
+        timestamps: 1D timestamp array (same length as raw_signal)
+        sample_rate: Estimated sample rate in Hz (used as fallback)
+        bandpass_low: Bandpass filter low cutoff (Hz)
+        bandpass_high: Bandpass filter high cutoff (Hz)
+        smooth_cutoff: Lowpass cutoff for TKEO envelope smoothing (Hz)
+        baseline_duration: Duration of quiet baseline period at start (seconds)
+        k_threshold: Multiplier for baseline std in detection threshold
+        amplitude_divisor: Divisor for amplitude-based threshold (max/divisor)
+        backtrack_k: Multiplier for baseline std in backtrack threshold
+        min_burst_duration: Minimum burst duration in seconds (shorter bursts are discarded)
+
+    Returns:
+        BurstDurationResult with burst count, average duration, std, and individual durations,
+        or None on failure.
+    """
+    try:
+        signal = raw_signal.copy()
+        ts = timestamps.copy()
+
+        # --- Timestamp preprocessing (same as TKEO) ---
+        mask = ~(np.isnan(ts) | np.isnan(signal))
+        ts = ts[mask]
+        signal = signal[mask]
+
+        if len(ts) < 30:
+            return None
+
+        # Interpolate duplicated timestamps
+        unique, counts = np.unique(ts, return_counts=True)
+        if len(set(counts)) == 1 and counts[0] > 1:
+            n_repeats = counts[0]
+            new_ts = []
+            for i in range(len(unique) - 1):
+                interp = np.linspace(unique[i], unique[i + 1], n_repeats, endpoint=False)
+                new_ts.extend(interp)
+            last_interval = unique[-1] - unique[-2] if len(unique) > 1 else 1.0
+            last_group = np.linspace(unique[-1], unique[-1] + last_interval, n_repeats, endpoint=False)
+            new_ts.extend(last_group)
+            ts = np.array(new_ts)
+
+        # Enforce strictly increasing timestamps
+        inc_mask = np.diff(ts, prepend=ts[0]) > 0
+        ts = ts[inc_mask]
+        signal = signal[inc_mask]
+
+        if len(ts) < 30 or np.all(np.diff(ts) == 0):
+            return None
+
+        # Re-estimate sample rate from cleaned timestamps
+        dt = np.diff(ts)
+        dt = dt[dt > 0]
+        if len(dt) == 0 or np.median(dt) == 0:
+            return None
+        fs = 1.0 / np.median(np.diff(ts))
+
+        # --- Bandpass filter ---
+        nyq = 0.5 * fs
+        if bandpass_high >= nyq:
+            bandpass_high = nyq * 0.95
+        b, a = butter(4, [bandpass_low / nyq, bandpass_high / nyq], btype='band')
+        filtered = filtfilt(b, a, signal)
+
+        # --- Compute TKEO ---
+        tkeo = np.zeros(len(filtered))
+        tkeo[1:-1] = filtered[1:-1] ** 2 - filtered[:-2] * filtered[2:]
+        tkeo[0] = tkeo[1]
+        tkeo[-1] = tkeo[-2]
+
+        # --- Rectify and smooth ---
+        tkeo_rect = np.abs(tkeo)
+        b_lp, a_lp = butter(4, smooth_cutoff / nyq, btype='low')
+        envelope = filtfilt(b_lp, a_lp, tkeo_rect)
+
+        # --- Baseline from first baseline_duration seconds ---
+        baseline_mask = ts <= (ts[0] + baseline_duration)
+        baseline_env = envelope[baseline_mask]
+        if len(baseline_env) == 0:
+            baseline_env = envelope[:int(fs * baseline_duration)]
+
+        baseline_mean = np.mean(baseline_env)
+        baseline_std = np.std(baseline_env)
+
+        # --- Detection threshold (same as activation timings) ---
+        stat_threshold = baseline_mean + k_threshold * baseline_std
+        amp_threshold = np.max(envelope) / amplitude_divisor
+        thresh = max(stat_threshold, amp_threshold)
+
+        # --- Backtrack threshold for onset/offset detection ---
+        onset_threshold = baseline_mean + backtrack_k * baseline_std
+
+        # --- Detect burst onsets and offsets using backtrack threshold ---
+        above = envelope > onset_threshold
+        onsets = np.where(np.diff(above.astype(int)) == 1)[0] + 1
+        offsets = np.where(np.diff(above.astype(int)) == -1)[0] + 1
+
+        # Handle edge cases (burst at start or end)
+        if above[0]:
+            onsets = np.insert(onsets, 0, 0)
+        if above[-1]:
+            offsets = np.append(offsets, len(envelope) - 1)
+
+        # Pair onsets and offsets
+        n_pairs = min(len(onsets), len(offsets))
+        if n_pairs == 0:
+            return BurstDurationResult(
+                num_bursts=0,
+                avg_duration=0.0,
+                std_duration=0.0,
+                burst_durations=np.array([]),
+            )
+
+        # Only keep bursts whose peak exceeds the detection threshold
+        valid_durations = []
+        for i in range(n_pairs):
+            burst_env = envelope[onsets[i]:offsets[i]]
+            if len(burst_env) > 0 and np.max(burst_env) >= thresh:
+                dur = ts[offsets[i]] - ts[onsets[i]]
+                if dur > min_burst_duration:
+                    valid_durations.append(dur)
+
+        burst_durations = np.array(valid_durations)
+        num_bursts = len(burst_durations)
+        avg_duration = float(np.mean(burst_durations)) if num_bursts > 0 else 0.0
+        std_duration = float(np.std(burst_durations)) if num_bursts > 0 else 0.0
+
+        return BurstDurationResult(
+            num_bursts=num_bursts,
+            avg_duration=avg_duration,
+            std_duration=std_duration,
+            burst_durations=burst_durations,
+        )
+
+    except Exception as e:
+        print(f"[Features] Burst duration computation failed: {e}")
         return None
 

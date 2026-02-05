@@ -6,7 +6,7 @@ import os
 from app.data.csv_loader import CSVDataLoader
 from app.managers.analysis_track_manager import AnalysisTrackManager
 from app.managers.time_navigation_controller import TimeNavigationController
-from app.processing.features import compute_tkeo_activation_timing
+from app.processing.features import compute_tkeo_activation_timing, compute_burst_duration
 
 
 class DataAnalysisWindow(QtWidgets.QWidget):
@@ -275,6 +275,9 @@ class DataAnalysisWindow(QtWidgets.QWidget):
         self.activation_timings_button = QtWidgets.QPushButton("Activation Timings")
         features_ctrl_layout.addWidget(self.activation_timings_button)
 
+        self.burst_duration_button = QtWidgets.QPushButton("Burst Duration")
+        features_ctrl_layout.addWidget(self.burst_duration_button)
+
         features_ctrl_layout.addStretch()
 
         self.content_tabs.addTab(features_control_panel, "Features")
@@ -330,6 +333,7 @@ class DataAnalysisWindow(QtWidgets.QWidget):
 
         # Feature controls
         self.activation_timings_button.clicked.connect(self._on_activation_timings)
+        self.burst_duration_button.clicked.connect(self._on_burst_duration)
 
     def open_file_dialog(self):
         """Show file picker for CSV files."""
@@ -550,6 +554,65 @@ class DataAnalysisWindow(QtWidgets.QWidget):
             )
 
         self._update_view()
+
+    def _on_burst_duration(self):
+        """Compute burst duration statistics on selected channel(s)."""
+        if self.csv_loader is None or not self.csv_loader.is_loaded():
+            QtWidgets.QMessageBox.warning(self, "No Data", "Please load a CSV file first.")
+            return
+
+        if self.track_manager is None:
+            QtWidgets.QMessageBox.warning(self, "No Data", "Please load a CSV file first.")
+            return
+
+        selected = self.track_manager.get_selected_channels()
+        if len(selected) == 0:
+            QtWidgets.QMessageBox.warning(
+                self, "No Channel Selected",
+                "Please select at least one channel in the Data Viewing tab."
+            )
+            return
+
+        self.feature_results_text.clear()
+
+        raw_data = self.csv_loader.data
+        timestamps = self.csv_loader.timestamps
+        sample_rate = self.csv_loader.sample_rate
+
+        errors = []
+        results_text_parts = []
+        for ch_idx in selected:
+            ch_signal = raw_data[ch_idx, :]
+
+            result = compute_burst_duration(
+                raw_signal=ch_signal,
+                timestamps=timestamps,
+                sample_rate=sample_rate,
+            )
+
+            if result is None:
+                errors.append(f"Channel {ch_idx + 1}")
+                continue
+
+            lines = [
+                f"Channel {ch_idx + 1}: Burst Duration Analysis",
+                f"  Number of bursts: {result.num_bursts}",
+                f"  Average burst duration: {result.avg_duration:.3f} s",
+                f"  Burst duration variance (std): {result.std_duration:.3f} s",
+            ]
+            results_text_parts.append("\n".join(lines))
+
+        if results_text_parts:
+            self.feature_results_text.setText("\n\n".join(results_text_parts))
+        else:
+            self.feature_results_text.setText("No bursts detected.")
+
+        if errors:
+            QtWidgets.QMessageBox.warning(
+                self, "Processing Warning",
+                f"Burst duration computation failed for: {', '.join(errors)}.\n"
+                "The signal may be too short or contain invalid data."
+            )
 
     def _apply_window_duration(self):
         """Apply the window duration from input field."""

@@ -18,7 +18,7 @@ This script is useful for quantifying muscle activation timing in EMG data, e.g.
 
 import numpy as np
 import pandas as pd
-from scipy.signal import butter, filtfilt
+from scipy.signal import butter, filtfilt, find_peaks
 
 import matplotlib.pyplot as plt
 
@@ -107,30 +107,33 @@ baseline_mask = timestamps <= (timestamps[0] + 0.5)
 baseline_env = envelope[baseline_mask]
 baseline_deriv = envelope_deriv[baseline_mask]
 
-# 3. Find triggers: points where derivative exceeds mean + 3*std of baseline derivative
-thresh = np.mean(baseline_deriv) + 3 * np.std(baseline_deriv)
-trigger_mask = envelope_deriv > thresh
+# 3. Peak-first approach: find all significant peaks, then backtrack to onset
+baseline_env_mean = np.mean(baseline_env)
+baseline_env_std = np.std(baseline_env)
+amplitude_thresh = np.max(envelope) / 2
 
+# Estimate minimum distance between peaks in samples
+min_peak_distance_sec = 0.3  # reduced to catch closer peaks
+samples_per_sec = fs
+min_peak_distance = int(min_peak_distance_sec * samples_per_sec)
 
-# 4. Remove duplicates: skip detections within 500 ms of each other
-trigger_indices = np.where(trigger_mask)[0]
-if len(trigger_indices) > 0:
-    trigger_times = timestamps[trigger_indices]
-    # Only keep triggers separated by at least 500 ms
-    filtered_indices = [trigger_indices[0]]
-    for idx in trigger_indices[1:]:
-        if timestamps[idx] - timestamps[filtered_indices[-1]] >= 0.3:
-            filtered_indices.append(idx)
-    filtered_indices = np.array(filtered_indices)
-else:
-    filtered_indices = np.array([])
+# Find all peaks above amplitude_thresh with minimum distance and prominence
+# Prominence ensures the peak stands out from surrounding signal (not just noise on a plateau)
+min_prominence = amplitude_thresh * 0.2  # peak must rise at least 50% of threshold from its base
+peak_indices, peak_properties = find_peaks(
+    envelope,
+    height=amplitude_thresh,
+    distance=min_peak_distance,
+    prominence=min_prominence
+)
+
+# filtered_indices are the peaks we'll backtrack from
+filtered_indices = peak_indices
 
 # --- Backtracking to find true onset, with pre-onset baseline check and post-onset envelope rise check ---
 onset_indices = []
+env_thresh = baseline_env_mean + 1 * baseline_env_std  # threshold for envelope backtracking
 if len(filtered_indices) > 0:
-    baseline_env_mean = np.mean(baseline_env)
-    baseline_env_std = np.std(baseline_env)
-    env_thresh = baseline_env_mean + 1 * baseline_env_std  # threshold for envelope backtracking
     pre_window = 0.05  # seconds to check before onset (e.g., 50 ms)
     post_window = 0.05  # seconds to check after onset (e.g., 150 ms)
     min_rise = 0.5 * baseline_env_std  # minimum envelope rise after onset
@@ -156,12 +159,13 @@ else:
 # Plot envelope and overlay detected onsets as vertical lines
 plt.figure(figsize=(12, 6))
 plt.plot(timestamps, envelope, label='Envelope (10 Hz Lowpass)', linewidth=2)
+plt.axhline(amplitude_thresh, color='g', linestyle='-', label='Amplitude Threshold')
+plt.axhline(env_thresh, color='orange', linestyle='-', label='Backtrack Threshold')
 for t in onset_times:
     plt.axvline(t, color='r', linestyle='--', label='Onset' if t == onset_times[0] else None)
 plt.title('EMG Envelope with Detected Onsets (Backtracked)')
 plt.xlabel('Time (s)')
 plt.ylabel('Amplitude')
-if len(onset_times) > 0:
-    plt.legend()
+plt.legend()
 plt.tight_layout()
 plt.show()

@@ -15,7 +15,7 @@ main application UI. They are available for use in custom analysis scripts
 or future UI integration.
 """
 
-from scipy.signal import spectrogram, butter, filtfilt, find_peaks
+from scipy.signal import spectrogram, butter, filtfilt, find_peaks, resample
 from dataclasses import dataclass
 from typing import Optional
 import numpy as np
@@ -556,5 +556,122 @@ def compute_burst_duration(
 
     except Exception as e:
         print(f"[Features] Burst duration computation failed: {e}")
+        return None
+
+
+@dataclass
+class BilateralSymmetryResult:
+    """Results from bilateral symmetry analysis."""
+    timestamps: np.ndarray
+    symmetry_index: np.ndarray
+    sample_rate: float
+    mean_si: float
+    std_si: float
+    max_asymmetry: float
+    rms_file1: float
+    rms_file2: float
+    window_duration: float
+    overlap_duration: float
+    file1_sample_rate: float
+    file2_sample_rate: float
+    analysis_sample_rate: float
+
+
+def compute_bilateral_symmetry(
+    signal_1: np.ndarray,
+    timestamps_1: np.ndarray,
+    sample_rate_1: float,
+    signal_2: np.ndarray,
+    timestamps_2: np.ndarray,
+    sample_rate_2: float,
+    window_sec: float = 0.25,
+    step_sec: float = 0.05,
+) -> Optional[BilateralSymmetryResult]:
+    """Compute bilateral symmetry index between two EMG signals.
+
+    Aligns both signals to t=0, resamples to a common sample rate if needed,
+    and computes a sliding-window RMS-based symmetry index.
+
+    SI = (RMS_1 - RMS_2) / (RMS_1 + RMS_2)
+    Range: [-1, 1]. 0 = symmetric, +ve = signal 1 dominant, -ve = signal 2 dominant.
+    """
+    try:
+        # Convert both to relative time starting at 0
+        rel_ts_1 = timestamps_1 - timestamps_1[0]
+        rel_ts_2 = timestamps_2 - timestamps_2[0]
+
+        duration_1 = rel_ts_1[-1]
+        duration_2 = rel_ts_2[-1]
+
+        # Only compare the overlapping portion
+        overlap_duration = min(duration_1, duration_2)
+        if overlap_duration <= 0:
+            return None
+
+        # Trim both signals to overlap
+        sig_1 = signal_1[rel_ts_1 <= overlap_duration].copy()
+        sig_2 = signal_2[rel_ts_2 <= overlap_duration].copy()
+
+        # Resample to common rate (lower of the two)
+        analysis_rate = min(sample_rate_1, sample_rate_2)
+        target_samples = int(overlap_duration * analysis_rate)
+        if target_samples < 10:
+            return None
+
+        if len(sig_1) != target_samples:
+            sig_1 = resample(sig_1, target_samples)
+        if len(sig_2) != target_samples:
+            sig_2 = resample(sig_2, target_samples)
+
+        common_ts = np.linspace(0, overlap_duration, target_samples, endpoint=False)
+
+        # Sliding-window RMS symmetry index
+        window_samples = max(1, int(window_sec * analysis_rate))
+        step_samples = max(1, int(step_sec * analysis_rate))
+
+        si_values = []
+        si_times = []
+
+        for start in range(0, len(sig_1) - window_samples + 1, step_samples):
+            end = start + window_samples
+            rms_1 = np.sqrt(np.mean(sig_1[start:end] ** 2))
+            rms_2 = np.sqrt(np.mean(sig_2[start:end] ** 2))
+
+            denom = rms_1 + rms_2
+            si = (rms_1 - rms_2) / denom if denom > 0 else 0.0
+
+            si_values.append(si)
+            center = min(start + window_samples // 2, len(common_ts) - 1)
+            si_times.append(common_ts[center])
+
+        si_array = np.array(si_values)
+        si_timestamps = np.array(si_times)
+
+        if len(si_array) == 0:
+            return None
+
+        overall_rms_1 = np.sqrt(np.mean(sig_1 ** 2))
+        overall_rms_2 = np.sqrt(np.mean(sig_2 ** 2))
+
+        output_rate = 1.0 / np.mean(np.diff(si_timestamps)) if len(si_timestamps) > 1 else 1.0 / step_sec
+
+        return BilateralSymmetryResult(
+            timestamps=si_timestamps,
+            symmetry_index=si_array,
+            sample_rate=output_rate,
+            mean_si=float(np.mean(si_array)),
+            std_si=float(np.std(si_array)),
+            max_asymmetry=float(np.max(np.abs(si_array))),
+            rms_file1=float(overall_rms_1),
+            rms_file2=float(overall_rms_2),
+            window_duration=window_sec,
+            overlap_duration=float(overlap_duration),
+            file1_sample_rate=sample_rate_1,
+            file2_sample_rate=sample_rate_2,
+            analysis_sample_rate=analysis_rate,
+        )
+
+    except Exception as e:
+        print(f"[Features] Bilateral symmetry computation failed: {e}")
         return None
 

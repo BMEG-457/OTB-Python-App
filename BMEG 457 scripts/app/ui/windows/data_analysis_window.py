@@ -1,12 +1,17 @@
 """Window for analyzing recorded EMG data from CSV files."""
 
 from PyQt5 import QtWidgets, QtCore, QtGui
+import pyqtgraph as pg
 import os
 
 from app.data.csv_loader import CSVDataLoader
 from app.managers.analysis_track_manager import AnalysisTrackManager
 from app.managers.time_navigation_controller import TimeNavigationController
-from app.processing.features import compute_tkeo_activation_timing, compute_burst_duration
+from app.processing.features import (
+    compute_tkeo_activation_timing,
+    compute_burst_duration,
+    compute_bilateral_symmetry,
+)
 
 
 class DataAnalysisWindow(QtWidgets.QWidget):
@@ -278,6 +283,9 @@ class DataAnalysisWindow(QtWidgets.QWidget):
         self.burst_duration_button = QtWidgets.QPushButton("Burst Duration")
         features_ctrl_layout.addWidget(self.burst_duration_button)
 
+        self.bilateral_symmetry_button = QtWidgets.QPushButton("Bilateral Symmetry")
+        features_ctrl_layout.addWidget(self.bilateral_symmetry_button)
+
         features_ctrl_layout.addStretch()
 
         self.content_tabs.addTab(features_control_panel, "Features")
@@ -334,6 +342,7 @@ class DataAnalysisWindow(QtWidgets.QWidget):
         # Feature controls
         self.activation_timings_button.clicked.connect(self._on_activation_timings)
         self.burst_duration_button.clicked.connect(self._on_burst_duration)
+        self.bilateral_symmetry_button.clicked.connect(self._on_bilateral_symmetry)
 
     def open_file_dialog(self):
         """Show file picker for CSV files."""
@@ -613,6 +622,167 @@ class DataAnalysisWindow(QtWidgets.QWidget):
                 f"Burst duration computation failed for: {', '.join(errors)}.\n"
                 "The signal may be too short or contain invalid data."
             )
+
+    def _on_bilateral_symmetry(self):
+        """Compute bilateral symmetry between selected channel and a channel from a second file."""
+        if self.csv_loader is None or not self.csv_loader.is_loaded():
+            QtWidgets.QMessageBox.warning(self, "No Data", "Please load a CSV file first.")
+            return
+
+        if self.track_manager is None:
+            QtWidgets.QMessageBox.warning(self, "No Data", "Please load a CSV file first.")
+            return
+
+        selected = self.track_manager.get_selected_channels()
+        if len(selected) == 0:
+            QtWidgets.QMessageBox.warning(
+                self, "No Channel Selected",
+                "Please select at least one channel in the Data Viewing tab."
+            )
+            return
+
+        ch1_idx = selected[0]
+
+        # Open file dialog for the second CSV
+        recordings_dir = os.path.join(os.path.dirname(os.path.dirname(
+            os.path.dirname(os.path.dirname(os.path.dirname(__file__))))), 'recordings')
+        if not os.path.exists(recordings_dir):
+            recordings_dir = ""
+
+        file_path_2, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self,
+            "Open Second Recording File (for comparison)",
+            recordings_dir,
+            "CSV Files (*.csv);;All Files (*)"
+        )
+
+        if not file_path_2:
+            return
+
+        # Load the second file with a temporary loader
+        loader_2 = CSVDataLoader()
+        if not loader_2.load_file(file_path_2):
+            QtWidgets.QMessageBox.critical(
+                self, "Load Error",
+                f"Failed to load second file: {file_path_2}"
+            )
+            return
+
+        # Channel selection for file 2
+        num_channels_2 = loader_2.get_channel_count()
+        if num_channels_2 == 0:
+            QtWidgets.QMessageBox.warning(self, "No Channels", "Second file contains no channels.")
+            return
+
+        channel_names_2 = [f"Channel {i + 1}" for i in range(num_channels_2)]
+        ch2_name, ok = QtWidgets.QInputDialog.getItem(
+            self,
+            "Select Channel from File 2",
+            f"File: {os.path.basename(file_path_2)}\n"
+            f"({num_channels_2} channels, {loader_2.sample_rate:.0f} Hz, "
+            f"{loader_2.get_duration():.2f}s)\n\n"
+            f"Comparing against: Channel {ch1_idx + 1} from File 1\n\n"
+            f"Select channel:",
+            channel_names_2,
+            0,
+            False
+        )
+
+        if not ok:
+            return
+
+        ch2_idx = channel_names_2.index(ch2_name)
+
+        # Extract signals
+        signal_1 = self.csv_loader.data[ch1_idx, :]
+        timestamps_1 = self.csv_loader.timestamps
+        sample_rate_1 = self.csv_loader.sample_rate
+
+        signal_2 = loader_2.data[ch2_idx, :]
+        timestamps_2 = loader_2.timestamps
+        sample_rate_2 = loader_2.sample_rate
+
+        # Compute
+        self.track_manager.remove_feature_tracks()
+        self.feature_results_text.clear()
+
+        result = compute_bilateral_symmetry(
+            signal_1=signal_1,
+            timestamps_1=timestamps_1,
+            sample_rate_1=sample_rate_1,
+            signal_2=signal_2,
+            timestamps_2=timestamps_2,
+            sample_rate_2=sample_rate_2,
+        )
+
+        if result is None:
+            QtWidgets.QMessageBox.warning(
+                self, "Computation Failed",
+                "Bilateral symmetry computation failed.\n"
+                "The signals may be too short or contain invalid data."
+            )
+            return
+
+        # Add feature track
+        file1_name = os.path.basename(self.csv_loader.file_path)
+        file2_name = os.path.basename(file_path_2)
+
+        title = (
+            f"Bilateral Symmetry - Ch{ch1_idx + 1} ({file1_name}) "
+            f"vs Ch{ch2_idx + 1} ({file2_name})"
+        )
+
+        feature_track = self.track_manager.add_feature_track(
+            title=title,
+            timestamps=result.timestamps,
+            data_1d=result.symmetry_index,
+            sample_rate=result.sample_rate,
+        )
+
+        # Add reference line at y=0 (perfect symmetry)
+        zero_line = pg.InfiniteLine(
+            pos=0.0, angle=0,
+            pen=pg.mkPen(color=(255, 255, 255, 100), width=1, style=QtCore.Qt.DashLine),
+        )
+        feature_track.plot_widget.addItem(zero_line)
+        feature_track.plot_widget.setYRange(-1.0, 1.0)
+
+        # Display results
+        lines = [
+            "=== Bilateral Symmetry Analysis ===",
+            f"  File 1: {file1_name}, Channel {ch1_idx + 1} ({result.file1_sample_rate:.0f} Hz)",
+            f"  File 2: {file2_name}, Channel {ch2_idx + 1} ({result.file2_sample_rate:.0f} Hz)",
+            f"  Analysis sample rate: {result.analysis_sample_rate:.0f} Hz",
+            f"  Overlap duration: {result.overlap_duration:.2f} s",
+            f"  Window size: {result.window_duration:.3f} s",
+            "",
+            "--- Summary Statistics ---",
+            f"  Mean Symmetry Index: {result.mean_si:+.4f}",
+            f"  Std Symmetry Index:  {result.std_si:.4f}",
+            f"  Max Asymmetry:       {result.max_asymmetry:.4f}",
+            f"  Overall RMS File 1:  {result.rms_file1:.6f}",
+            f"  Overall RMS File 2:  {result.rms_file2:.6f}",
+            "",
+            "--- Interpretation ---",
+            "  SI near 0 = symmetric",
+            "  SI > 0 = File 1 dominant",
+            "  SI < 0 = File 2 dominant",
+        ]
+
+        abs_mean = abs(result.mean_si)
+        if abs_mean < 0.1:
+            assessment = "GOOD SYMMETRY (|mean SI| < 0.1)"
+        elif abs_mean < 0.25:
+            assessment = "MILD ASYMMETRY (0.1 < |mean SI| < 0.25)"
+        elif abs_mean < 0.5:
+            assessment = "MODERATE ASYMMETRY (0.25 < |mean SI| < 0.5)"
+        else:
+            assessment = "SEVERE ASYMMETRY (|mean SI| > 0.5)"
+
+        lines.append(f"  Assessment: {assessment}")
+
+        self.feature_results_text.setText("\n".join(lines))
+        self._update_view()
 
     def _apply_window_duration(self):
         """Apply the window duration from input field."""

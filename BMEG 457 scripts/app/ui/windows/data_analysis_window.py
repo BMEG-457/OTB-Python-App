@@ -1,11 +1,17 @@
 """Window for analyzing recorded EMG data from CSV files."""
 
 from PyQt5 import QtWidgets, QtCore, QtGui
+import pyqtgraph as pg
 import os
 
 from app.data.csv_loader import CSVDataLoader
 from app.managers.analysis_track_manager import AnalysisTrackManager
 from app.managers.time_navigation_controller import TimeNavigationController
+from app.processing.features import (
+    compute_tkeo_activation_timing,
+    compute_burst_duration,
+    compute_bilateral_symmetry,
+)
 
 
 class DataAnalysisWindow(QtWidgets.QWidget):
@@ -133,11 +139,40 @@ class DataAnalysisWindow(QtWidgets.QWidget):
         self.main_layout.addWidget(time_row)
 
     def _create_main_content(self):
-        """Create main content area with plot and control panel."""
-        content_widget = QtWidgets.QWidget()
-        content_layout = QtWidgets.QHBoxLayout(content_widget)
+        """Create main content area with shared plot, tabbed control panels, and results panel."""
+        # Vertical splitter: plot area on top, results panel on bottom
+        splitter = QtWidgets.QSplitter(QtCore.Qt.Vertical)
 
-        # Scroll area for the track
+        # Top section: plot + control tabs side by side
+        top_widget = QtWidgets.QWidget()
+        top_layout = QtWidgets.QHBoxLayout(top_widget)
+        top_layout.setContentsMargins(0, 0, 0, 0)
+
+        # Shared scroll area for the plot (visible in all tabs)
+        self._create_shared_plot_area(top_layout)
+
+        # Tab widget for control panels only (right side)
+        self.content_tabs = QtWidgets.QTabWidget()
+        self.content_tabs.setMaximumWidth(250)
+
+        # Create control panels as tabs
+        self._create_data_viewing_controls()
+        self._create_features_controls()
+
+        top_layout.addWidget(self.content_tabs, stretch=0)
+        splitter.addWidget(top_widget)
+
+        # Bottom section: results panel
+        self._create_results_panel(splitter)
+
+        # Set initial split ratio (plot gets ~80%, results ~20%)
+        splitter.setStretchFactor(0, 4)
+        splitter.setStretchFactor(1, 1)
+
+        self.main_layout.addWidget(splitter)
+
+    def _create_shared_plot_area(self, parent_layout):
+        """Create the shared scroll area for plots (visible in all tabs)."""
         self.scroll_area = QtWidgets.QScrollArea()
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
@@ -146,9 +181,10 @@ class DataAnalysisWindow(QtWidgets.QWidget):
         self.scroll_widget = QtWidgets.QWidget()
         self.scroll_layout = QtWidgets.QVBoxLayout(self.scroll_widget)
         self.scroll_area.setWidget(self.scroll_widget)
-        content_layout.addWidget(self.scroll_area, stretch=3)
+        parent_layout.addWidget(self.scroll_area, stretch=3)
 
-        # Right-side control panel
+    def _create_data_viewing_controls(self):
+        """Create the Data Viewing control panel."""
         control_panel = QtWidgets.QWidget()
         ctrl_layout = QtWidgets.QVBoxLayout(control_panel)
 
@@ -233,9 +269,52 @@ class DataAnalysisWindow(QtWidgets.QWidget):
         ctrl_layout.addWidget(self.apply_processing_button)
 
         ctrl_layout.addStretch()
-        content_layout.addWidget(control_panel, stretch=0)
 
-        self.main_layout.addWidget(content_widget)
+        self.content_tabs.addTab(control_panel, "Data Viewing")
+
+    def _create_features_controls(self):
+        """Create the Features control panel."""
+        features_control_panel = QtWidgets.QWidget()
+        features_ctrl_layout = QtWidgets.QVBoxLayout(features_control_panel)
+
+        self.activation_timings_button = QtWidgets.QPushButton("Activation Timings")
+        features_ctrl_layout.addWidget(self.activation_timings_button)
+
+        self.burst_duration_button = QtWidgets.QPushButton("Burst Duration")
+        features_ctrl_layout.addWidget(self.burst_duration_button)
+
+        self.bilateral_symmetry_button = QtWidgets.QPushButton("Bilateral Symmetry")
+        features_ctrl_layout.addWidget(self.bilateral_symmetry_button)
+
+        features_ctrl_layout.addStretch()
+
+        self.content_tabs.addTab(features_control_panel, "Features")
+
+    def _create_results_panel(self, parent_splitter):
+        """Create the bottom results panel."""
+        results_widget = QtWidgets.QWidget()
+        results_layout = QtWidgets.QVBoxLayout(results_widget)
+        results_layout.setContentsMargins(5, 2, 5, 2)
+
+        header_layout = QtWidgets.QHBoxLayout()
+        header_layout.addWidget(QtWidgets.QLabel("Results"))
+        self.clear_results_button = QtWidgets.QPushButton("Clear")
+        self.clear_results_button.setMaximumWidth(60)
+        self.clear_results_button.clicked.connect(lambda: self.feature_results_text.clear())
+        header_layout.addStretch()
+        header_layout.addWidget(self.clear_results_button)
+        results_layout.addLayout(header_layout)
+
+        self.feature_results_text = QtWidgets.QTextEdit()
+        self.feature_results_text.setReadOnly(True)
+        self.feature_results_text.setStyleSheet(
+            "QTextEdit { font-family: Consolas, monospace; font-size: 11px; "
+            "background-color: #1e1e1e; color: #d4d4d4; }"
+        )
+        self.feature_results_text.setPlaceholderText("Feature results will appear here...")
+        results_layout.addWidget(self.feature_results_text)
+
+        parent_splitter.addWidget(results_widget)
 
     def _connect_signals(self):
         """Connect all UI signals to handlers."""
@@ -259,6 +338,11 @@ class DataAnalysisWindow(QtWidgets.QWidget):
 
         # Processing controls
         self.apply_processing_button.clicked.connect(self._apply_processing)
+
+        # Feature controls
+        self.activation_timings_button.clicked.connect(self._on_activation_timings)
+        self.burst_duration_button.clicked.connect(self._on_burst_duration)
+        self.bilateral_symmetry_button.clicked.connect(self._on_bilateral_symmetry)
 
     def open_file_dialog(self):
         """Show file picker for CSV files."""
@@ -405,6 +489,300 @@ class DataAnalysisWindow(QtWidgets.QWidget):
 
         # Apply processing
         self.track_manager.set_processing(rectify, envelope_type, rms_window, lowpass_cutoff)
+
+    def _on_activation_timings(self):
+        """Compute TKEO activation timings on selected channel(s) and add feature tracks."""
+        if self.csv_loader is None or not self.csv_loader.is_loaded():
+            QtWidgets.QMessageBox.warning(self, "No Data", "Please load a CSV file first.")
+            return
+
+        if self.track_manager is None:
+            QtWidgets.QMessageBox.warning(self, "No Data", "Please load a CSV file first.")
+            return
+
+        selected = self.track_manager.get_selected_channels()
+        if len(selected) == 0:
+            QtWidgets.QMessageBox.warning(
+                self, "No Channel Selected",
+                "Please select at least one channel in the Data Viewing tab."
+            )
+            return
+
+        # Clear previous feature tracks and results
+        self.track_manager.remove_feature_tracks()
+        self.feature_results_text.clear()
+
+        raw_data = self.csv_loader.data
+        timestamps = self.csv_loader.timestamps
+        sample_rate = self.csv_loader.sample_rate
+        base_time = timestamps[0]
+
+        errors = []
+        results_text_parts = []
+        for ch_idx in selected:
+            ch_signal = raw_data[ch_idx, :]
+
+            result = compute_tkeo_activation_timing(
+                raw_signal=ch_signal,
+                timestamps=timestamps,
+                sample_rate=sample_rate,
+            )
+
+            if result is None:
+                errors.append(f"Channel {ch_idx + 1}")
+                continue
+
+            title = f"TKEO Activation - Ch {ch_idx + 1} ({len(result.onset_times)} onsets)"
+            self.track_manager.add_feature_track(
+                title=title,
+                timestamps=result.timestamps,
+                data_1d=result.tkeo_envelope,
+                sample_rate=result.sample_rate,
+                onset_times=result.onset_times,
+                detection_threshold=result.detection_threshold,
+                backtrack_threshold=result.backtrack_threshold,
+            )
+
+            # Build results text for this channel
+            lines = [f"Channel {ch_idx + 1}: {len(result.onset_times)} onsets"]
+            for i, t in enumerate(result.onset_times):
+                relative_t = t - base_time
+                lines.append(f"  #{i + 1}  {relative_t:.3f}s")
+            results_text_parts.append("\n".join(lines))
+
+        if results_text_parts:
+            self.feature_results_text.setText("\n\n".join(results_text_parts))
+        else:
+            self.feature_results_text.setText("No onsets detected.")
+
+        if errors:
+            QtWidgets.QMessageBox.warning(
+                self, "Processing Warning",
+                f"TKEO computation failed for: {', '.join(errors)}.\n"
+                "The signal may be too short or contain invalid data."
+            )
+
+        self._update_view()
+
+    def _on_burst_duration(self):
+        """Compute burst duration statistics on selected channel(s)."""
+        if self.csv_loader is None or not self.csv_loader.is_loaded():
+            QtWidgets.QMessageBox.warning(self, "No Data", "Please load a CSV file first.")
+            return
+
+        if self.track_manager is None:
+            QtWidgets.QMessageBox.warning(self, "No Data", "Please load a CSV file first.")
+            return
+
+        selected = self.track_manager.get_selected_channels()
+        if len(selected) == 0:
+            QtWidgets.QMessageBox.warning(
+                self, "No Channel Selected",
+                "Please select at least one channel in the Data Viewing tab."
+            )
+            return
+
+        self.feature_results_text.clear()
+
+        raw_data = self.csv_loader.data
+        timestamps = self.csv_loader.timestamps
+        sample_rate = self.csv_loader.sample_rate
+
+        errors = []
+        results_text_parts = []
+        for ch_idx in selected:
+            ch_signal = raw_data[ch_idx, :]
+
+            result = compute_burst_duration(
+                raw_signal=ch_signal,
+                timestamps=timestamps,
+                sample_rate=sample_rate,
+            )
+
+            if result is None:
+                errors.append(f"Channel {ch_idx + 1}")
+                continue
+
+            lines = [
+                f"Channel {ch_idx + 1}: Burst Duration Analysis",
+                f"  Number of bursts: {result.num_bursts}",
+                f"  Average burst duration: {result.avg_duration:.3f} s",
+                f"  Burst duration variance (std): {result.std_duration:.3f} s",
+            ]
+            results_text_parts.append("\n".join(lines))
+
+        if results_text_parts:
+            self.feature_results_text.setText("\n\n".join(results_text_parts))
+        else:
+            self.feature_results_text.setText("No bursts detected.")
+
+        if errors:
+            QtWidgets.QMessageBox.warning(
+                self, "Processing Warning",
+                f"Burst duration computation failed for: {', '.join(errors)}.\n"
+                "The signal may be too short or contain invalid data."
+            )
+
+    def _on_bilateral_symmetry(self):
+        """Compute bilateral symmetry between selected channel and a channel from a second file."""
+        if self.csv_loader is None or not self.csv_loader.is_loaded():
+            QtWidgets.QMessageBox.warning(self, "No Data", "Please load a CSV file first.")
+            return
+
+        if self.track_manager is None:
+            QtWidgets.QMessageBox.warning(self, "No Data", "Please load a CSV file first.")
+            return
+
+        selected = self.track_manager.get_selected_channels()
+        if len(selected) == 0:
+            QtWidgets.QMessageBox.warning(
+                self, "No Channel Selected",
+                "Please select at least one channel in the Data Viewing tab."
+            )
+            return
+
+        ch1_idx = selected[0]
+
+        # Open file dialog for the second CSV
+        recordings_dir = os.path.join(os.path.dirname(os.path.dirname(
+            os.path.dirname(os.path.dirname(os.path.dirname(__file__))))), 'recordings')
+        if not os.path.exists(recordings_dir):
+            recordings_dir = ""
+
+        file_path_2, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self,
+            "Open Second Recording File (for comparison)",
+            recordings_dir,
+            "CSV Files (*.csv);;All Files (*)"
+        )
+
+        if not file_path_2:
+            return
+
+        # Load the second file with a temporary loader
+        loader_2 = CSVDataLoader()
+        if not loader_2.load_file(file_path_2):
+            QtWidgets.QMessageBox.critical(
+                self, "Load Error",
+                f"Failed to load second file: {file_path_2}"
+            )
+            return
+
+        # Channel selection for file 2
+        num_channels_2 = loader_2.get_channel_count()
+        if num_channels_2 == 0:
+            QtWidgets.QMessageBox.warning(self, "No Channels", "Second file contains no channels.")
+            return
+
+        channel_names_2 = [f"Channel {i + 1}" for i in range(num_channels_2)]
+        ch2_name, ok = QtWidgets.QInputDialog.getItem(
+            self,
+            "Select Channel from File 2",
+            f"File: {os.path.basename(file_path_2)}\n"
+            f"({num_channels_2} channels, {loader_2.sample_rate:.0f} Hz, "
+            f"{loader_2.get_duration():.2f}s)\n\n"
+            f"Comparing against: Channel {ch1_idx + 1} from File 1\n\n"
+            f"Select channel:",
+            channel_names_2,
+            0,
+            False
+        )
+
+        if not ok:
+            return
+
+        ch2_idx = channel_names_2.index(ch2_name)
+
+        # Extract signals
+        signal_1 = self.csv_loader.data[ch1_idx, :]
+        timestamps_1 = self.csv_loader.timestamps
+        sample_rate_1 = self.csv_loader.sample_rate
+
+        signal_2 = loader_2.data[ch2_idx, :]
+        timestamps_2 = loader_2.timestamps
+        sample_rate_2 = loader_2.sample_rate
+
+        # Compute
+        self.track_manager.remove_feature_tracks()
+        self.feature_results_text.clear()
+
+        result = compute_bilateral_symmetry(
+            signal_1=signal_1,
+            timestamps_1=timestamps_1,
+            sample_rate_1=sample_rate_1,
+            signal_2=signal_2,
+            timestamps_2=timestamps_2,
+            sample_rate_2=sample_rate_2,
+        )
+
+        if result is None:
+            QtWidgets.QMessageBox.warning(
+                self, "Computation Failed",
+                "Bilateral symmetry computation failed.\n"
+                "The signals may be too short or contain invalid data."
+            )
+            return
+
+        # Add feature track
+        file1_name = os.path.basename(self.csv_loader.file_path)
+        file2_name = os.path.basename(file_path_2)
+
+        title = (
+            f"Bilateral Symmetry - Ch{ch1_idx + 1} ({file1_name}) "
+            f"vs Ch{ch2_idx + 1} ({file2_name})"
+        )
+
+        feature_track = self.track_manager.add_feature_track(
+            title=title,
+            timestamps=result.timestamps,
+            data_1d=result.symmetry_index,
+            sample_rate=result.sample_rate,
+        )
+
+        # Add reference line at y=0 (perfect symmetry)
+        zero_line = pg.InfiniteLine(
+            pos=0.0, angle=0,
+            pen=pg.mkPen(color=(255, 255, 255, 100), width=1, style=QtCore.Qt.DashLine),
+        )
+        feature_track.plot_widget.addItem(zero_line)
+        feature_track.plot_widget.setYRange(-1.0, 1.0)
+
+        # Display results
+        lines = [
+            "=== Bilateral Symmetry Analysis ===",
+            f"  File 1: {file1_name}, Channel {ch1_idx + 1} ({result.file1_sample_rate:.0f} Hz)",
+            f"  File 2: {file2_name}, Channel {ch2_idx + 1} ({result.file2_sample_rate:.0f} Hz)",
+            f"  Analysis sample rate: {result.analysis_sample_rate:.0f} Hz",
+            f"  Overlap duration: {result.overlap_duration:.2f} s",
+            f"  Window size: {result.window_duration:.3f} s",
+            "",
+            "--- Summary Statistics ---",
+            f"  Mean Symmetry Index: {result.mean_si:+.4f}",
+            f"  Std Symmetry Index:  {result.std_si:.4f}",
+            f"  Max Asymmetry:       {result.max_asymmetry:.4f}",
+            f"  Overall RMS File 1:  {result.rms_file1:.6f}",
+            f"  Overall RMS File 2:  {result.rms_file2:.6f}",
+            "",
+            "--- Interpretation ---",
+            "  SI near 0 = symmetric",
+            "  SI > 0 = File 1 dominant",
+            "  SI < 0 = File 2 dominant",
+        ]
+
+        abs_mean = abs(result.mean_si)
+        if abs_mean < 0.1:
+            assessment = "GOOD SYMMETRY (|mean SI| < 0.1)"
+        elif abs_mean < 0.25:
+            assessment = "MILD ASYMMETRY (0.1 < |mean SI| < 0.25)"
+        elif abs_mean < 0.5:
+            assessment = "MODERATE ASYMMETRY (0.25 < |mean SI| < 0.5)"
+        else:
+            assessment = "SEVERE ASYMMETRY (|mean SI| > 0.5)"
+
+        lines.append(f"  Assessment: {assessment}")
+
+        self.feature_results_text.setText("\n".join(lines))
+        self._update_view()
 
     def _apply_window_duration(self):
         """Apply the window duration from input field."""

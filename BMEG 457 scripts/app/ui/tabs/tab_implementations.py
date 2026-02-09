@@ -1,6 +1,7 @@
 """
 Example implementation of tabs using the BaseTab interface.
 This shows how to refactor existing tabs to follow the standardized structure.
+NOT IMPLEMENTED
 """
 from PyQt5 import QtWidgets
 import pyqtgraph as pg

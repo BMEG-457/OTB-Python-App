@@ -1,5 +1,7 @@
 """Track manager for data analysis mode."""
 
+import numpy as np
+import pyqtgraph as pg
 from PyQt5 import QtWidgets
 from app.core.analysis_track import AnalysisTrack
 
@@ -16,6 +18,10 @@ class AnalysisTrackManager:
 
         # CSV data reference
         self.csv_loader = None
+
+        # Feature tracks
+        self.feature_tracks = []
+        self.feature_containers = []
 
         # Current view settings
         self.view_start = 0.0
@@ -61,6 +67,8 @@ class AnalysisTrackManager:
 
     def _clear_tracks(self):
         """Clear existing track and container."""
+        self.remove_feature_tracks()
+
         if self.track_container:
             self.track_container.setParent(None)
             self.track_container.deleteLater()
@@ -87,10 +95,15 @@ class AnalysisTrackManager:
         if self.track:
             self.track.set_view_window(start_time, duration)
 
+        for ft in self.feature_tracks:
+            ft.set_view_window(start_time, duration)
+
     def draw_all_tracks(self):
-        """Draw the track with current view settings."""
+        """Draw all tracks with current view settings."""
         if self.track:
             self.track.draw()
+        for ft in self.feature_tracks:
+            ft.draw()
 
     def get_channel_count(self):
         """Get number of channels available."""
@@ -131,3 +144,82 @@ class AnalysisTrackManager:
         """
         if self.track:
             self.track.set_processing(rectify, envelope_type, rms_window, lowpass_cutoff)
+
+    def add_feature_track(self, title: str, timestamps: np.ndarray,
+                          data_1d: np.ndarray, sample_rate: float,
+                          onset_times: np.ndarray = None,
+                          detection_threshold: float = None,
+                          backtrack_threshold: float = None) -> AnalysisTrack:
+        """Add a new feature track to the scroll layout.
+
+        Args:
+            title: Track title
+            timestamps: Timestamp array for the feature data
+            data_1d: 1D array of feature values
+            sample_rate: Sample rate of the feature data
+            onset_times: Optional onset times for vertical markers
+            detection_threshold: Optional detection threshold for horizontal line
+            backtrack_threshold: Optional backtrack threshold for horizontal line
+
+        Returns:
+            The created AnalysisTrack instance
+        """
+        data_2d = data_1d.reshape(1, -1)
+
+        feature_track = AnalysisTrack(
+            title=title,
+            num_channels=1,
+            timestamps=timestamps,
+            data=data_2d,
+            sample_rate=sample_rate,
+        )
+
+        # Auto-select the single channel and set green curve color
+        feature_track.set_selected_channels([0])
+        feature_track.curves[0].setPen(pg.mkPen(color=(0, 200, 100), width=2))
+
+        # Add onset markers if provided
+        if onset_times is not None and len(onset_times) > 0:
+            base_time = timestamps[0]
+            feature_track.add_onset_markers(onset_times, base_time)
+
+        # Add threshold lines if provided
+        if detection_threshold is not None and backtrack_threshold is not None:
+            feature_track.add_threshold_lines(detection_threshold, backtrack_threshold)
+
+        # Apply current view window
+        feature_track.set_view_window(self.view_start, self.view_duration)
+
+        # Create container widget
+        container = QtWidgets.QWidget()
+        layout = QtWidgets.QVBoxLayout(container)
+        layout.setContentsMargins(0, 0, 0, 5)
+        feature_track.plot_widget.setMinimumHeight(300)
+        layout.addWidget(feature_track.plot_widget)
+
+        # Insert before trailing stretch
+        self._remove_trailing_stretch()
+        self.scroll_layout.addWidget(container)
+        self.scroll_layout.addStretch()
+
+        self.feature_tracks.append(feature_track)
+        self.feature_containers.append(container)
+
+        feature_track.draw()
+        return feature_track
+
+    def remove_feature_tracks(self):
+        """Remove all feature tracks."""
+        for container in self.feature_containers:
+            container.setParent(None)
+            container.deleteLater()
+        self.feature_tracks.clear()
+        self.feature_containers.clear()
+
+    def _remove_trailing_stretch(self):
+        """Remove the trailing stretch item from the scroll layout."""
+        count = self.scroll_layout.count()
+        if count > 0:
+            last_item = self.scroll_layout.itemAt(count - 1)
+            if last_item and last_item.widget() is None:
+                self.scroll_layout.removeItem(last_item)

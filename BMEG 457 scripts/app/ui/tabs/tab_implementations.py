@@ -1,7 +1,6 @@
 """
-Example implementation of tabs using the BaseTab interface.
-This shows how to refactor existing tabs to follow the standardized structure.
-NOT IMPLEMENTED
+Tab implementations using the BaseTab interface.
+Each class provides a standardized tab with content area and control panel.
 """
 from PyQt5 import QtWidgets
 import pyqtgraph as pg
@@ -94,9 +93,11 @@ class AllTracksTab(BaseTab):
     All Tracks tab implementation following the BaseTab interface.
     Displays all data tracks with channel and track selection controls.
     """
-    
+
     def __init__(self, parent=None):
         self.scroll_layout = None
+        self.select_channels_button = None
+        self.select_tracks_button = None
         super().__init__(parent)
     
     def create_content_area(self) -> QtWidgets.QWidget:
@@ -106,12 +107,12 @@ class AllTracksTab(BaseTab):
     
     def create_control_panel(self) -> QtWidgets.QWidget:
         """Create control panel with channel and track selection."""
-        select_channels_button = QtWidgets.QPushButton("Select Channels")
-        select_tracks_button = QtWidgets.QPushButton("Select Tracks")
-        
+        self.select_channels_button = QtWidgets.QPushButton("Select Channels")
+        self.select_tracks_button = QtWidgets.QPushButton("Select Tracks")
+
         return self.create_control_panel_base([
-            select_channels_button,
-            select_tracks_button
+            self.select_channels_button,
+            self.select_tracks_button
         ])
     
     def get_tab_name(self) -> str:
@@ -124,9 +125,10 @@ class HDsEMGTab(BaseTab):
     HDsEMG tab implementation following the BaseTab interface.
     Displays HDsEMG-specific plots with averaged channel controls.
     """
-    
+
     def __init__(self, parent=None):
         self.hdsemg_scroll_layout = None
+        self.hd_average_select_button = None
         super().__init__(parent)
     
     def create_content_area(self) -> QtWidgets.QWidget:
@@ -136,9 +138,9 @@ class HDsEMGTab(BaseTab):
     
     def create_control_panel(self) -> QtWidgets.QWidget:
         """Create control panel with average channel selector."""
-        hd_average_select_button = QtWidgets.QPushButton("Select Avg Channels")
-        
-        return self.create_control_panel_base([hd_average_select_button])
+        self.hd_average_select_button = QtWidgets.QPushButton("Select Avg Channels")
+
+        return self.create_control_panel_base([self.hd_average_select_button])
     
     def get_tab_name(self) -> str:
         """Return the tab display name."""
@@ -150,9 +152,10 @@ class FeaturesTab(BaseTab):
     Features tab implementation following the BaseTab interface.
     Displays feature extraction results with controls.
     """
-    
+
     def __init__(self, parent=None):
         self.feature_scroll_layout = None
+        self.feature_controls_button = None
         super().__init__(parent)
     
     def create_content_area(self) -> QtWidgets.QWidget:
@@ -162,9 +165,9 @@ class FeaturesTab(BaseTab):
     
     def create_control_panel(self) -> QtWidgets.QWidget:
         """Create control panel with feature controls."""
-        feature_controls_button = QtWidgets.QPushButton("Feature Controls")
-        
-        return self.create_control_panel_base([feature_controls_button])
+        self.feature_controls_button = QtWidgets.QPushButton("Feature Controls")
+
+        return self.create_control_panel_base([self.feature_controls_button])
     
     def get_tab_name(self) -> str:
         """Return the tab display name."""

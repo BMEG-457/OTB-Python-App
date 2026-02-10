@@ -2,16 +2,16 @@
 
 from PyQt5 import QtWidgets, QtCore
 import numpy as np
-import pyqtgraph as pg
 from datetime import datetime
 import csv
 import os
 
 from app.core.config import Config
 from app.data.data_receiver import DataReceiverThread
-from app.processing import filters, features, transforms
+from app.processing import filters, transforms
 from app.processing.pipeline import get_pipeline
 from app.ui.dialogs.dialogs import CalibrationDialog, ChannelSelectorDialog, TrackVisibilityDialog
+from app.ui.tabs.tab_implementations import AllTracksTab, HDsEMGTab, FeaturesTab, HeatmapTab
 from app.managers.recording_manager import RecordingManager
 from app.managers.streaming_controller import StreamingController
 from app.managers.track_manager import TrackManager
@@ -111,143 +111,16 @@ class SoundtrackWindow(QtWidgets.QWidget):
         self.main_layout.addWidget(top_bar)
 
     def _create_tabs(self):
-        """Create all visualization tabs."""
+        """Create all visualization tabs using BaseTab implementations."""
         self.tabs = QtWidgets.QTabWidget()
 
-        # Tab 1: All Tracks
-        all_tracks_content = QtWidgets.QWidget()
-        all_tracks_layout = QtWidgets.QHBoxLayout(all_tracks_content)
+        self.all_tracks_tab = AllTracksTab()
+        self.hdsemg_tab = HDsEMGTab()
+        self.features_tab = FeaturesTab()
+        self.heatmap_tab = HeatmapTab()
 
-        # Scroll Area for all Tracks
-        self.scroll_area = QtWidgets.QScrollArea()
-        self.scroll_area.setWidgetResizable(True)
-        self.scroll_area.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
-        self.scroll_area.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
-
-        self.scroll_widget = QtWidgets.QWidget()
-        self.scroll_layout = QtWidgets.QVBoxLayout(self.scroll_widget)
-        self.scroll_area.setWidget(self.scroll_widget)
-        all_tracks_layout.addWidget(self.scroll_area, stretch=3)
-
-        # Right-side control panel
-        control_panel = QtWidgets.QWidget()
-        ctrl_layout = QtWidgets.QVBoxLayout(control_panel)
-        self.select_channels_button = QtWidgets.QPushButton("Select Channels")
-        self.select_tracks_button = QtWidgets.QPushButton("Select Tracks")
-        ctrl_layout.addWidget(self.select_channels_button)
-        ctrl_layout.addWidget(self.select_tracks_button)
-        ctrl_layout.addStretch()
-        all_tracks_layout.addWidget(control_panel, stretch=0)
-        
-        self.tabs.addTab(all_tracks_content, "All Tracks")
-
-        # Tab 2: HDsEMG
-        self._create_hdsemg_tab()
-
-        # Tab 3: Features
-        self._create_features_tab()
-        
-        # Tab 4: Heatmap
-        self._create_heatmap_tab()
-
-    def _create_hdsemg_tab(self):
-        """Create the HDsEMG tab."""
-        hdsemg_content = QtWidgets.QWidget()
-        hdsemg_layout = QtWidgets.QHBoxLayout(hdsemg_content)
-
-        self.hdsemg_scroll_area = QtWidgets.QScrollArea()
-        self.hdsemg_scroll_area.setWidgetResizable(True)
-        self.hdsemg_scroll_area.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
-        self.hdsemg_scroll_area.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
-
-        self.hdsemg_scroll_widget = QtWidgets.QWidget()
-        self.hdsemg_scroll_layout = QtWidgets.QVBoxLayout(self.hdsemg_scroll_widget)
-        self.hdsemg_scroll_area.setWidget(self.hdsemg_scroll_widget)
-        hdsemg_layout.addWidget(self.hdsemg_scroll_area, stretch=3)
-
-        # Right-side control panel
-        hdsemg_control_panel = QtWidgets.QWidget()
-        hdsemg_ctrl_layout = QtWidgets.QVBoxLayout(hdsemg_control_panel)
-        self.hd_average_select_button = QtWidgets.QPushButton("Select Avg Channels")
-        hdsemg_ctrl_layout.addWidget(self.hd_average_select_button)
-        hdsemg_ctrl_layout.addStretch()
-        hdsemg_layout.addWidget(hdsemg_control_panel, stretch=0)
-        
-        self.tabs.addTab(hdsemg_content, "HDsEMG")
-
-    def _create_features_tab(self):
-        """Create the Features tab."""
-        feature_content = QtWidgets.QWidget()
-        feature_layout = QtWidgets.QHBoxLayout(feature_content)
-
-        self.feature_scroll_area = QtWidgets.QScrollArea()
-        self.feature_scroll_area.setWidgetResizable(True)
-        self.feature_scroll_area.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarAsNeeded)
-        self.feature_scroll_area.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarAlwaysOff)
-
-        self.feature_scroll_widget = QtWidgets.QWidget()
-        self.feature_scroll_layout = QtWidgets.QVBoxLayout(self.feature_scroll_widget)
-        self.feature_scroll_area.setWidget(self.feature_scroll_widget)
-        feature_layout.addWidget(self.feature_scroll_area, stretch=3)
-
-        # Right-side control panel
-        feature_control_panel = QtWidgets.QWidget()
-        feature_ctrl_layout = QtWidgets.QVBoxLayout(feature_control_panel)
-        self.feature_controls_button = QtWidgets.QPushButton("Feature Controls")
-        feature_ctrl_layout.addWidget(self.feature_controls_button)
-        feature_ctrl_layout.addStretch()
-        feature_layout.addWidget(feature_control_panel, stretch=0)
-        
-        self.tabs.addTab(feature_content, "Features")
-
-    def _create_heatmap_tab(self):
-        """Create the Heatmap tab."""
-        heatmap_content = QtWidgets.QWidget()
-        heatmap_layout = QtWidgets.QHBoxLayout(heatmap_content)
-        
-        # Heatmap view
-        self.heatmap_view = pg.GraphicsLayoutWidget()
-        self.heatmap_plot = self.heatmap_view.addPlot()
-        self.heatmap_plot.setAspectLocked(True)
-        self.heatmap_plot.hideAxis('bottom')
-        self.heatmap_plot.hideAxis('left')
-        self.heatmap_plot.setTitle("HD-EMG Array Heatmap (Normalized to MVC)")
-        
-        # Create 8x8 ImageItem for heatmap
-        self.heatmap_img = pg.ImageItem()
-        self.heatmap_plot.addItem(self.heatmap_img)
-        
-        # Initialize with zeros
-        self.heatmap_data = np.zeros((8, 8))
-        self.heatmap_img.setImage(self.heatmap_data.T, levels=(0, 1))
-        
-        # Set colormap
-        colormap = pg.colormap.get('viridis')
-        self.heatmap_img.setColorMap(colormap)
-        
-        # Add colorbar
-        colorbar = pg.ColorBarItem(values=(0, 1), colorMap=colormap)
-        colorbar.setImageItem(self.heatmap_img)
-        
-        # Add text labels for channel numbers
-        self.heatmap_labels = []
-        for row in range(8):
-            for col in range(8):
-                channel_num = col * 8 + (7 - row) + 1
-                text = pg.TextItem(str(channel_num), color='w', anchor=(0.5, 0.5))
-                text.setPos(col + 0.5, row + 0.5)
-                self.heatmap_plot.addItem(text)
-                self.heatmap_labels.append(text)
-        
-        heatmap_layout.addWidget(self.heatmap_view, stretch=3)
-
-        # Right-side control panel
-        heatmap_control_panel = QtWidgets.QWidget()
-        heatmap_ctrl_layout = QtWidgets.QVBoxLayout(heatmap_control_panel)
-        heatmap_ctrl_layout.addStretch()
-        heatmap_layout.addWidget(heatmap_control_panel, stretch=0)
-        
-        self.tabs.addTab(heatmap_content, "Heatmap")
+        for tab in [self.all_tracks_tab, self.hdsemg_tab, self.features_tab, self.heatmap_tab]:
+            self.tabs.addTab(tab, tab.get_tab_name())
 
     def _initialize_managers(self):
         """Initialize manager components."""
@@ -261,9 +134,9 @@ class SoundtrackWindow(QtWidgets.QWidget):
         self.track_manager = TrackManager(
             self.device,
             Config.DEFAULT_PLOT_TIME,
-            self.scroll_layout,
-            self.hdsemg_scroll_layout,
-            self.feature_scroll_layout
+            self.all_tracks_tab.scroll_layout,
+            self.hdsemg_tab.hdsemg_scroll_layout,
+            self.features_tab.feature_scroll_layout
         )
         
         # Get tracks reference for compatibility
@@ -287,11 +160,11 @@ class SoundtrackWindow(QtWidgets.QWidget):
         """Connect all UI signals to handlers. Note: calibrate/stream/record buttons are wired in main.py."""
         # These buttons are wired in main.py to handle device initialization:
         # - self.calibrate_button
-        # - self.stream_button  
+        # - self.stream_button
         # - self.record_button
-        self.select_channels_button.clicked.connect(self.open_channel_selector)
-        self.select_tracks_button.clicked.connect(self.open_track_selector)
-        self.hd_average_select_button.clicked.connect(self.open_hd_average_selector)
+        self.all_tracks_tab.select_channels_button.clicked.connect(self.open_channel_selector)
+        self.all_tracks_tab.select_tracks_button.clicked.connect(self.open_track_selector)
+        self.hdsemg_tab.hd_average_select_button.clicked.connect(self.open_hd_average_selector)
 
     def _configure_pipelines(self):
         """Configure processing pipelines."""
@@ -335,43 +208,35 @@ class SoundtrackWindow(QtWidgets.QWidget):
         """Update the 8x8 heatmap with current RMS values normalized to MVC."""
         if not self.is_calibrated or self.mvc_rms is None or self.hdsemg_track is None:
             return
-        
+
         try:
             buf = self.hdsemg_track.buffer
             window_size = min(100, buf.shape[1])
             recent_data = buf[:, -window_size:]
-            
+
             # Filter out saturated values before computing RMS
             saturation_threshold_low = -32760  # Close to -32768 (int16 min)
             saturation_threshold_high = 32760   # Close to 32767 (int16 max)
-            
+
             # Compute RMS per channel with saturation filtering
             current_rms = np.zeros(recent_data.shape[0])
             for ch_idx in range(recent_data.shape[0]):
                 channel_data = recent_data[ch_idx]
                 # Filter out saturated values
                 non_saturated = channel_data[
-                    (channel_data > saturation_threshold_low) & 
+                    (channel_data > saturation_threshold_low) &
                     (channel_data < saturation_threshold_high)
                 ]
-                
+
                 if len(non_saturated) > 0:
                     current_rms[ch_idx] = np.sqrt(np.mean(non_saturated**2))
                 else:
-                    # All samples saturated - use 0
                     current_rms[ch_idx] = 0.0
-            
+
             if len(current_rms) >= 64 and len(self.mvc_rms) >= 64:
                 normalized_rms = current_rms[:64] / (self.mvc_rms[:64] + 1e-10)
                 normalized_rms = np.clip(normalized_rms, 0, 1)
-                
-                for col in range(8):
-                    for row in range(8):
-                        channel_idx = col * 8 + (7 - row)
-                        if channel_idx < len(normalized_rms):
-                            self.heatmap_data[row, col] = normalized_rms[channel_idx]
-                
-                self.heatmap_img.setImage(self.heatmap_data.T, levels=(0, 1))
+                self.heatmap_tab.update_heatmap(normalized_rms)
         except Exception:
             pass
 

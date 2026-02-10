@@ -1,21 +1,12 @@
 """EMG feature extraction and analysis functions.
 
-This module provides various EMG signal analysis functions including:
-- Basic features: RMS, MAV, integrated EMG
-- Contraction detection based on RMS rate of change
-- Fatigue analysis (time to fatigue via RMS and median frequency)
-- Activation timing detection
-
-IMPORTANT: Many functions assume a calibration phase has been completed.
-Calibration provides: baseline_rms, threshold, and mvc_rms for each channel.
-These calibrated values should be passed as parameters to the analysis functions.
-
-Note: These functions are implemented but not yet fully integrated into the
-main application UI. They are available for use in custom analysis scripts
-or future UI integration.
+Provides basic EMG features (RMS, MAV, integrated EMG) and post-session
+analysis: TKEO-based activation timing, burst duration, bilateral symmetry,
+and fatigue detection.
 """
 
-from scipy.signal import spectrogram, butter, filtfilt, find_peaks, resample
+from scipy.signal import butter, filtfilt, find_peaks, resample
+from scipy.fft import rfft, rfftfreq
 from dataclasses import dataclass
 from typing import Optional
 import numpy as np
@@ -32,212 +23,6 @@ def mav(data):
 # takes in collection of arrays
 def averaged_channels(data): 
     return np.mean(data, axis=0, keepdims=True).T
-
-# EMG Analysis Metrics
-# Note: Baseline and threshold values are provided by the calibration phase
-# relative muscle strength (shown by the heatmap), time to muscle fatigue (function), activation timing (contraction detection), muscle-cocontraction (idk)
-
-def detect_contractions_rms_rate(rms_data, fs, rate_threshold=0.001, min_duration_samples=5, 
-                                 smoothing_window=3, hysteresis_factor=0.6, merge_gap_samples=None):
-    """
-    Detect muscle contractions based on rate of change in RMS with improved robustness to spikes.
-    
-    Parameters:
-    - rms_data: numpy array of RMS values
-    - fs: effective sampling frequency of the RMS data (e.g., fs/window_size)
-    - rate_threshold: threshold for rate of change (V/s) to detect contraction onset
-    - min_duration_samples: minimum number of samples for a valid contraction
-    - smoothing_window: window size for smoothing rate of change (reduces spike sensitivity)
-    - hysteresis_factor: offset threshold = hysteresis_factor * rate_threshold (0.5-0.8 recommended)
-    - merge_gap_samples: merge contractions separated by fewer samples (None = auto: 0.5 * min_duration)
-    
-    Returns:
-    - contractions: list of tuples (start_time, end_time, peak_rms) for each detected contraction
-    """
-    # Calculate rate of change of RMS
-    drms_dt = np.gradient(rms_data, 1/fs)
-    
-    # Smooth the rate of change to reduce sensitivity to spikes
-    if smoothing_window > 1:
-        # Use a moving average to smooth drms_dt
-        kernel = np.ones(smoothing_window) / smoothing_window
-        drms_dt_smooth = np.convolve(drms_dt, kernel, mode='same')
-    else:
-        drms_dt_smooth = drms_dt
-    
-    # Use hysteresis: higher threshold for onset, lower for offset
-    onset_threshold = rate_threshold
-    offset_threshold = -rate_threshold * hysteresis_factor  # Less negative, harder to trigger offset
-    
-    # Detect onset points (positive rate of change above threshold)
-    onset_mask = drms_dt_smooth > onset_threshold
-    
-    # Detect offset points (negative rate of change below offset threshold)
-    offset_mask = drms_dt_smooth < offset_threshold
-    
-    # Find contraction periods with improved robustness
-    contractions = []
-    in_contraction = False
-    start_idx = None
-    last_offset_idx = -999  # Track last offset to prevent rapid switching
-    refractory_period = max(3, int(min_duration_samples * 0.3))  # 30% of min duration
-    
-    for i in range(len(rms_data)):
-        if onset_mask[i] and not in_contraction:
-            # Only start new contraction if enough time passed since last offset
-            if i - last_offset_idx > refractory_period:
-                start_idx = i
-                in_contraction = True
-        elif offset_mask[i] and in_contraction:
-            # Contraction offset detected
-            end_idx = i
-            duration = end_idx - start_idx
-            
-            # Only include if duration meets minimum requirement
-            if duration >= min_duration_samples:
-                start_time = start_idx / fs
-                end_time = end_idx / fs
-                peak_rms = np.max(rms_data[start_idx:end_idx])
-                contractions.append((start_time, end_time, peak_rms))
-                last_offset_idx = i
-            
-            in_contraction = False
-            start_idx = None
-    
-    # Handle case where contraction extends to end of signal
-    if in_contraction and start_idx is not None:
-        duration = len(rms_data) - start_idx
-        if duration >= min_duration_samples:
-            start_time = start_idx / fs
-            end_time = (len(rms_data) - 1) / fs
-            peak_rms = np.max(rms_data[start_idx:])
-            contractions.append((start_time, end_time, peak_rms))
-    
-    # Merge nearby contractions (likely caused by spikes splitting one contraction)
-    if len(contractions) > 1:
-        if merge_gap_samples is None:
-            merge_gap_samples = max(3, int(min_duration_samples * 0.5))
-        
-        merged = []
-        current_start, current_end, current_peak = contractions[0]
-        
-        for i in range(1, len(contractions)):
-            next_start, next_end, next_peak = contractions[i]
-            gap_time = next_start - current_end
-            gap_samples = int(gap_time * fs)
-            
-            if gap_samples <= merge_gap_samples:
-                # Merge with current contraction
-                current_end = next_end
-                # Find peak in merged region
-                start_idx = int(current_start * fs)
-                end_idx = int(current_end * fs)
-                current_peak = np.max(rms_data[start_idx:end_idx])
-            else:
-                # Save current and start new
-                merged.append((current_start, current_end, current_peak))
-                current_start, current_end, current_peak = next_start, next_end, next_peak
-        
-        # Add the last contraction
-        merged.append((current_start, current_end, current_peak))
-        contractions = merged
-    
-    return contractions
-    
-def time_to_fatigue_post(rec_data, notch_data, fs, baseline_rms, rms_threshold, mf_threshold):
-    """
-    Calculate time to fatigue based on RMS and median frequency.
-    
-    Monitor changes in RMS (increases as fatigue progresses due to increased motor unit recruitment ~20-30%)
-    and median frequency (MF) (decreases as fatigue progresses due to slowing of muscle fiber conduction velocity).
-    
-    Parameters:
-    - rec_data: rectified/filtered EMG signal
-    - notch_data: notch-filtered EMG signal for frequency analysis
-    - fs: sampling frequency
-    - baseline_rms: baseline RMS value from calibration phase
-    - rms_threshold: sensitivity for RMS rate of change (31.7% increase in non-athletes during fatigue)
-    - mf_threshold: Hz/sec decline threshold for median frequency (-0.89 Hz/sec decline during fatigue)
-    
-    Returns:
-    - time_to_rms_fatigue: time array of RMS fatigue onset points (or None)
-    - time_to_mf_fatigue: time array of MF fatigue onset points (or None)
-    """
-    # RMS array calculation
-    window_size = 200
-    rms_data = np.sqrt(np.convolve(rec_data**2, np.ones(window_size)/window_size, mode='valid'))
-    t_rms = np.arange(len(rms_data)) / fs  # time vector for rms
-    
-    # Use baseline from calibration phase
-    # RMS rate of change
-    rms_threshold_value = baseline_rms * 1/rms_threshold
-    drms = np.gradient(rms_data, 1/fs) 
-    rms_indices = np.where(drms > rms_threshold_value)
-    
-    # Handle empty array case
-    if len(rms_indices[0]) > 0:
-        time_to_rms_fatigue = t_rms[rms_indices[0]]  # First occurrence
-    else:
-        time_to_rms_fatigue = None
-
-    # Median frequency calculation with improved implementation
-    nperseg = 256
-    noverlap = nperseg - 50  # Using overlap for cleaner implementation
-    
-    f, t_spec, Sxx = spectrogram(notch_data, fs=fs, nperseg=nperseg, noverlap=noverlap)
-    
-    # Calculate median frequency for each time window
-    median_freqs = []
-    for i in range(Sxx.shape[1]):
-        psd = Sxx[:, i]
-        cumsum = np.cumsum(psd)
-        cumsum /= cumsum[-1]  # normalize
-        mf = np.interp(0.5, cumsum, f)
-        median_freqs.append(mf)
-    
-    median_freqs = np.array(median_freqs)
-    times = t_spec
-
-    # Rate of change of median frequency
-    dmf = np.gradient(median_freqs, np.mean(np.diff(times)))
-    mf_indices = np.where(dmf < mf_threshold)
-
-    # Handle empty array case
-    if len(mf_indices) > 0:
-        time_to_mf_fatigue = times[mf_indices[0]]  # First occurrence
-    else:
-        time_to_mf_fatigue = None
-
-    return time_to_rms_fatigue, time_to_mf_fatigue
-
-# activation timing - RETURNS TIME POINTS WHERE ACTIVATION OCCURS BASED ON BASELINE THRESHOLD
-def activation_timing_post(rms_data, fs, baseline_threshold): 
-    """
-    Return time points (seconds) where RMS magnitude exceeds `baseline_threshold`.
-
-    Parameters
-    - rms_data: array-like of RMS values (1D or 2D). If multi-dimensional, it will be flattened.
-    - fs: sampling frequency in Hz
-    - baseline_threshold: scalar threshold to compare RMS against
-
-    Returns
-    - numpy.ndarray of times (seconds) where rms > baseline_threshold. May be empty.
-    """
-    # Ensure a 1-D numpy array
-    rms_arr = np.ravel(np.asarray(rms_data))
-    t_rms = np.arange(len(rms_arr)) / fs  # time vector for rms
-
-    mask = rms_arr > baseline_threshold
-    return t_rms[mask]
-
-# activation timings - RETURNS TRUE IF ACTIVATION OCCURS BASED ON BASELINE THRESHOLD
-def activation_timing_live(rms, baseline_threshold):
-    # Ensure a 1-D numpy array
-    if rms > baseline_threshold:
-        return True
-    return False
-
-# muscle cocontraction - RETURNS COACTIVATION INDEX BETWEEN TWO MUSCLES
 
 
 @dataclass
@@ -673,5 +458,205 @@ def compute_bilateral_symmetry(
 
     except Exception as e:
         print(f"[Features] Bilateral symmetry computation failed: {e}")
+        return None
+
+
+@dataclass
+class FatigueResult:
+    """Results from fatigue detection analysis."""
+    rms_times: np.ndarray
+    rms_values: np.ndarray
+    mf_times: np.ndarray
+    mf_values: np.ndarray
+    time_to_rms_fatigue: Optional[np.ndarray]
+    time_to_mf_fatigue: Optional[np.ndarray]
+    baseline_rms: float
+    rms_threshold: float
+    mf_threshold: float
+    sample_rate: float
+
+
+def _calculate_sliding_rms(data, window_size, step_size):
+    """Calculate RMS in sliding windows."""
+    n_samples = len(data)
+    rms_values = []
+    window_indices = []
+
+    for start in range(0, n_samples - window_size + 1, step_size):
+        end = start + window_size
+        rms_val = np.sqrt(np.mean(data[start:end] ** 2))
+        rms_values.append(rms_val)
+        window_indices.append((start + end) // 2)
+
+    return np.array(rms_values), np.array(window_indices)
+
+
+def _calculate_median_frequency(data, fs, window_size, step_size):
+    """Calculate median frequency in sliding windows using FFT with Hamming windowing."""
+    n_samples = len(data)
+    mf_values = []
+    window_indices = []
+    hamming = np.hamming(window_size)
+
+    for start in range(0, n_samples - window_size + 1, step_size):
+        end = start + window_size
+        windowed_data = data[start:end] * hamming
+
+        fft_vals = np.abs(rfft(windowed_data))
+        freqs = rfftfreq(window_size, 1 / fs)
+
+        cumsum = np.cumsum(fft_vals)
+        total_power = cumsum[-1]
+
+        if total_power > 0:
+            median_idx = np.where(cumsum >= total_power / 2)[0]
+            mf_values.append(freqs[median_idx[0]] if len(median_idx) > 0 else 0.0)
+        else:
+            mf_values.append(0.0)
+
+        window_indices.append((start + end) // 2)
+
+    return np.array(mf_values), np.array(window_indices)
+
+
+def compute_fatigue(
+    raw_signal: np.ndarray,
+    timestamps: np.ndarray,
+    sample_rate: float,
+    bandpass_low: float = 20.0,
+    bandpass_high: float = 450.0,
+    baseline_duration: float = 0.5,
+    rms_threshold: float = 0.317,
+    mf_threshold: float = -0.89,
+    window_duration: float = 0.5,
+    step_duration: float = 0.1,
+) -> Optional[FatigueResult]:
+    """Detect muscle fatigue based on RMS increase and median frequency decline.
+
+    Monitors two complementary fatigue indicators:
+    - RMS increases as fatigue progresses (increased motor unit recruitment, ~20-30%)
+    - Median frequency decreases (slowing of muscle fiber conduction velocity)
+
+    Parameters:
+        raw_signal: 1D raw EMG signal
+        timestamps: 1D timestamp array (same length as raw_signal)
+        sample_rate: Estimated sample rate in Hz (used as fallback)
+        bandpass_low: Bandpass filter low cutoff (Hz)
+        bandpass_high: Bandpass filter high cutoff (Hz)
+        baseline_duration: Duration of baseline period at start for RMS reference (seconds)
+        rms_threshold: Fractional RMS increase to flag fatigue (default 0.317 = 31.7%)
+        mf_threshold: Median frequency decline rate in Hz/sec (default -0.89)
+        window_duration: Sliding window size in seconds
+        step_duration: Sliding window step size in seconds
+
+    Returns:
+        FatigueResult with RMS/MF time series and fatigue onset points, or None on failure.
+    """
+    try:
+        signal = raw_signal.copy()
+        ts = timestamps.copy()
+
+        # --- Timestamp preprocessing (same as other compute functions) ---
+        mask = ~(np.isnan(ts) | np.isnan(signal))
+        ts = ts[mask]
+        signal = signal[mask]
+
+        if len(ts) < 30:
+            return None
+
+        unique, counts = np.unique(ts, return_counts=True)
+        if len(set(counts)) == 1 and counts[0] > 1:
+            n_repeats = counts[0]
+            new_ts = []
+            for i in range(len(unique) - 1):
+                interp = np.linspace(unique[i], unique[i + 1], n_repeats, endpoint=False)
+                new_ts.extend(interp)
+            last_interval = unique[-1] - unique[-2] if len(unique) > 1 else 1.0
+            last_group = np.linspace(unique[-1], unique[-1] + last_interval, n_repeats, endpoint=False)
+            new_ts.extend(last_group)
+            ts = np.array(new_ts)
+
+        inc_mask = np.diff(ts, prepend=ts[0]) > 0
+        ts = ts[inc_mask]
+        signal = signal[inc_mask]
+
+        if len(ts) < 30 or np.all(np.diff(ts) == 0):
+            return None
+
+        dt = np.diff(ts)
+        dt = dt[dt > 0]
+        if len(dt) == 0 or np.median(dt) == 0:
+            return None
+        fs = 1.0 / np.median(np.diff(ts))
+
+        # --- Bandpass filter ---
+        nyq = 0.5 * fs
+        if bandpass_high >= nyq:
+            bandpass_high = nyq * 0.95
+        b, a = butter(4, [bandpass_low / nyq, bandpass_high / nyq], btype='band')
+        filtered = filtfilt(b, a, signal)
+
+        # Rectified signal for RMS analysis
+        rectified = np.abs(filtered)
+
+        window_size = int(window_duration * fs)
+        step_size = int(step_duration * fs)
+
+        if window_size < 2 or step_size < 1:
+            return None
+
+        # --- Calculate sliding-window RMS ---
+        rms_values, rms_indices = _calculate_sliding_rms(rectified, window_size, step_size)
+        if len(rms_values) == 0:
+            return None
+        rms_times = ts[rms_indices]
+
+        # Baseline RMS from first baseline_duration seconds
+        baseline_end_idx = np.searchsorted(rms_times, ts[0] + baseline_duration)
+        if baseline_end_idx < 1:
+            baseline_end_idx = 1
+        baseline_rms_val = float(np.mean(rms_values[:baseline_end_idx]))
+
+        # RMS fatigue: percentage increase from baseline exceeds threshold
+        if baseline_rms_val > 0:
+            rms_change = (rms_values - baseline_rms_val) / baseline_rms_val
+            rms_fatigue_mask = rms_change >= rms_threshold
+            time_to_rms_fatigue = rms_times[rms_fatigue_mask] if np.any(rms_fatigue_mask) else None
+        else:
+            time_to_rms_fatigue = None
+
+        # --- Calculate sliding-window median frequency ---
+        mf_values, mf_indices = _calculate_median_frequency(filtered, fs, window_size, step_size)
+        if len(mf_values) == 0:
+            return None
+        mf_times = ts[mf_indices]
+
+        # MF fatigue: rate of decline exceeds threshold (Hz/sec)
+        mf_rate = np.zeros_like(mf_values)
+        if len(mf_values) > 1:
+            dt_mf = np.diff(mf_times)
+            dmf = np.diff(mf_values)
+            # Avoid division by zero
+            valid = dt_mf > 0
+            mf_rate[1:][valid] = dmf[valid] / dt_mf[valid]
+
+        mf_fatigue_mask = mf_rate <= mf_threshold
+        time_to_mf_fatigue = mf_times[mf_fatigue_mask] if np.any(mf_fatigue_mask) else None
+
+        return FatigueResult(
+            rms_times=rms_times,
+            rms_values=rms_values,
+            mf_times=mf_times,
+            mf_values=mf_values,
+            time_to_rms_fatigue=time_to_rms_fatigue,
+            time_to_mf_fatigue=time_to_mf_fatigue,
+            baseline_rms=baseline_rms_val,
+            rms_threshold=rms_threshold,
+            mf_threshold=mf_threshold,
+            sample_rate=fs,
+        )
+
+    except Exception as e:
+        print(f"[Features] Fatigue computation failed: {e}")
         return None
 

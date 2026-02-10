@@ -3,10 +3,15 @@ Base tab interface for standardized tab layout.
 All tabs should inherit from BaseTab to ensure consistent UI structure.
 """
 from PyQt5 import QtWidgets, QtCore
-from abc import ABC, abstractmethod
+from abc import ABCMeta, abstractmethod
 
 
-class BaseTab(QtWidgets.QWidget, ABC):
+# Resolve metaclass conflict between QWidget's sip.wrappertype and ABCMeta
+class _ABCQWidgetMeta(ABCMeta, type(QtWidgets.QWidget)):
+    pass
+
+
+class BaseTab(QtWidgets.QWidget, metaclass=_ABCQWidgetMeta):
     """
     Abstract base class for standardized tab layout.
     

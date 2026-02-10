@@ -13,6 +13,7 @@ from app.processing.features import (
     compute_tkeo_activation_timing,
     compute_burst_duration,
     compute_bilateral_symmetry,
+    compute_fatigue,
 )
 
 
@@ -241,6 +242,7 @@ class DataAnalysisWindow(QtWidgets.QWidget):
         self.features_panel.activation_timings_button.clicked.connect(self._on_activation_timings)
         self.features_panel.burst_duration_button.clicked.connect(self._on_burst_duration)
         self.features_panel.bilateral_symmetry_button.clicked.connect(self._on_bilateral_symmetry)
+        self.features_panel.fatigue_analysis_button.clicked.connect(self._on_fatigue_analysis)
 
     def open_file_dialog(self):
         """Show file picker for CSV files."""
@@ -685,6 +687,119 @@ class DataAnalysisWindow(QtWidgets.QWidget):
         lines.append(f"  Assessment: {assessment}")
 
         self.feature_results_text.setText("\n".join(lines))
+        self._update_view()
+
+    def _on_fatigue_analysis(self):
+        """Compute fatigue analysis on selected channel(s) and add feature tracks."""
+        if self.csv_loader is None or not self.csv_loader.is_loaded():
+            QtWidgets.QMessageBox.warning(self, "No Data", "Please load a CSV file first.")
+            return
+
+        if self.track_manager is None:
+            QtWidgets.QMessageBox.warning(self, "No Data", "Please load a CSV file first.")
+            return
+
+        selected = self.track_manager.get_selected_channels()
+        if len(selected) == 0:
+            QtWidgets.QMessageBox.warning(
+                self, "No Channel Selected",
+                "Please select at least one channel in the Data Viewing tab."
+            )
+            return
+
+        self.track_manager.remove_feature_tracks()
+        self.feature_results_text.clear()
+
+        raw_data = self.csv_loader.data
+        timestamps = self.csv_loader.timestamps
+        sample_rate = self.csv_loader.sample_rate
+        base_time = timestamps[0]
+
+        errors = []
+        results_text_parts = []
+        for ch_idx in selected:
+            ch_signal = raw_data[ch_idx, :]
+
+            result = compute_fatigue(
+                raw_signal=ch_signal,
+                timestamps=timestamps,
+                sample_rate=sample_rate,
+            )
+
+            if result is None:
+                errors.append(f"Channel {ch_idx + 1}")
+                continue
+
+            # Add RMS trend as a feature track
+            rms_title = f"Fatigue RMS - Ch {ch_idx + 1}"
+            self.track_manager.add_feature_track(
+                title=rms_title,
+                timestamps=result.rms_times,
+                data_1d=result.rms_values,
+                sample_rate=result.sample_rate,
+            )
+
+            # Add median frequency trend as a feature track
+            mf_title = f"Fatigue MF - Ch {ch_idx + 1}"
+            self.track_manager.add_feature_track(
+                title=mf_title,
+                timestamps=result.mf_times,
+                data_1d=result.mf_values,
+                sample_rate=result.sample_rate,
+            )
+
+            # Build results text
+            lines = [
+                f"=== Channel {ch_idx + 1}: Fatigue Analysis ===",
+                f"  Baseline RMS: {result.baseline_rms:.6f}",
+                f"  RMS threshold: {result.rms_threshold * 100:.1f}% increase",
+                f"  MF threshold: {result.mf_threshold:.2f} Hz/sec decline",
+                "",
+            ]
+
+            if result.time_to_rms_fatigue is not None and len(result.time_to_rms_fatigue) > 0:
+                first_rms = result.time_to_rms_fatigue[0] - base_time
+                lines.append(f"  RMS Fatigue onset: {first_rms:.2f}s")
+                lines.append(f"  Total RMS fatigue detections: {len(result.time_to_rms_fatigue)}")
+            else:
+                lines.append("  RMS Fatigue: Not detected")
+
+            if result.time_to_mf_fatigue is not None and len(result.time_to_mf_fatigue) > 0:
+                first_mf = result.time_to_mf_fatigue[0] - base_time
+                lines.append(f"  MF Fatigue onset: {first_mf:.2f}s")
+                lines.append(f"  Total MF fatigue detections: {len(result.time_to_mf_fatigue)}")
+            else:
+                lines.append("  MF Fatigue: Not detected")
+
+            # Determine earliest indicator
+            first_rms_t = result.time_to_rms_fatigue[0] if result.time_to_rms_fatigue is not None and len(result.time_to_rms_fatigue) > 0 else None
+            first_mf_t = result.time_to_mf_fatigue[0] if result.time_to_mf_fatigue is not None and len(result.time_to_mf_fatigue) > 0 else None
+
+            if first_rms_t is not None and first_mf_t is not None:
+                earliest = min(first_rms_t, first_mf_t) - base_time
+                indicator = "RMS" if first_rms_t <= first_mf_t else "MF"
+                lines.append(f"  Earliest indicator: {indicator} at {earliest:.2f}s")
+            elif first_rms_t is not None:
+                lines.append(f"  Earliest indicator: RMS at {first_rms_t - base_time:.2f}s")
+            elif first_mf_t is not None:
+                lines.append(f"  Earliest indicator: MF at {first_mf_t - base_time:.2f}s")
+            else:
+                lines.append("  No fatigue detected in this recording")
+
+            results_text_parts.append("\n".join(lines))
+
+        if results_text_parts:
+            self.feature_results_text.setText("\n\n".join(results_text_parts))
+        else:
+            self.feature_results_text.setText("No fatigue detected.")
+
+        if errors:
+            QtWidgets.QMessageBox.warning(
+                self, "Processing Warning",
+                f"Fatigue computation failed for: {', '.join(errors)}.\n"
+                "The signal may be too short or contain invalid data."
+            )
+
         self._update_view()
 
     def _apply_window_duration(self):

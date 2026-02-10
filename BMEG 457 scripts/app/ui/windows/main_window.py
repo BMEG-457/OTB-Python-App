@@ -8,7 +8,7 @@ import os
 
 from app.core.config import Config
 from app.data.data_receiver import DataReceiverThread
-from app.processing import filters, features, transforms
+from app.processing import filters, transforms
 from app.processing.pipeline import get_pipeline
 from app.ui.dialogs.dialogs import CalibrationDialog, ChannelSelectorDialog, TrackVisibilityDialog
 from app.ui.tabs.tab_implementations import AllTracksTab, HDsEMGTab, FeaturesTab, HeatmapTab

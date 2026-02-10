@@ -23,4 +23,7 @@ class FeaturesPanel(QtWidgets.QWidget):
         self.bilateral_symmetry_button = QtWidgets.QPushButton("Bilateral Symmetry")
         layout.addWidget(self.bilateral_symmetry_button)
 
+        self.fatigue_analysis_button = QtWidgets.QPushButton("Fatigue Analysis")
+        layout.addWidget(self.fatigue_analysis_button)
+
         layout.addStretch()

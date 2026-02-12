@@ -115,6 +115,11 @@ class AllTracksTab(BaseTab):
             self.select_tracks_button
         ])
     
+    def connect_signals(self, window):
+        """Connect channel and track selector buttons."""
+        self.select_channels_button.clicked.connect(window.open_channel_selector)
+        self.select_tracks_button.clicked.connect(window.open_track_selector)
+
     def get_tab_name(self) -> str:
         """Return the tab display name."""
         return "All Tracks"

@@ -8,7 +8,7 @@ from app.core.track import Track
 class TrackManager:
     """Manages initialization and organization of EMG signal tracks."""
     
-    def __init__(self, device, plot_time, scroll_layout, hdsemg_scroll_layout, feature_scroll_layout):
+    def __init__(self, device, plot_time, scroll_layout, hdsemg_scroll_layout=None, feature_scroll_layout=None):
         self.device = device
         self.plot_time = plot_time
         self.scroll_layout = scroll_layout
@@ -77,21 +77,20 @@ class TrackManager:
             self.scroll_layout.addWidget(track_container)
             self.track_containers.append((title, track_container))
 
-            # Store reference to HDsEMG main track and create per-channel tracks
+            # Store reference to HDsEMG main track
             if "HDsEMG" in title:
                 self.hdsemg_track = track
-                # create averaged-track container (shows the mean across selected channels)
                 self.hd_average_channels = list(range(n))
-                self.hd_average_track = Track("HD Average", self.device.frequency, 1, 0, conv, self.plot_time)
-                self.hd_average_track.plot_widget.setMinimumHeight(300)
-                hd_avg_container = QtWidgets.QWidget()
-                hd_avg_layout = QtWidgets.QVBoxLayout(hd_avg_container)
-                hd_avg_layout.addWidget(self.hd_average_track.plot_widget)
-                # add average plot (only) to HDsEMG tab
-                self.hdsemg_scroll_layout.addWidget(hd_avg_container)
+                # Only create the average track widget if an HDsEMG tab layout is provided
+                if self.hdsemg_scroll_layout is not None:
+                    self.hd_average_track = Track("HD Average", self.device.frequency, 1, 0, conv, self.plot_time)
+                    self.hd_average_track.plot_widget.setMinimumHeight(300)
+                    hd_avg_container = QtWidgets.QWidget()
+                    hd_avg_layout = QtWidgets.QVBoxLayout(hd_avg_container)
+                    hd_avg_layout.addWidget(self.hd_average_track.plot_widget)
+                    self.hdsemg_scroll_layout.addWidget(hd_avg_container)
 
-            if "Features" in title.lower():
-                # add to features tab instead
+            if "Features" in title.lower() and self.feature_scroll_layout is not None:
                 self.feature_scroll_layout.addWidget(track_container)
                 self.feature_track = Track("Feature", self.device.frequency, 1, 0, conv, self.plot_time)
                 self.feature_track.plot_widget.setMinimumHeight(300)
@@ -99,9 +98,10 @@ class TrackManager:
                 feature_layout = QtWidgets.QVBoxLayout(feature_container)
                 feature_layout.addWidget(self.feature_track.plot_widget)
                 self.feature_scroll_layout.addWidget(feature_container)
-        
+
         self.scroll_layout.addStretch()
-        self.hdsemg_scroll_layout.addStretch()
+        if self.hdsemg_scroll_layout is not None:
+            self.hdsemg_scroll_layout.addStretch()
     
     def change_plot_time(self, new_time):
         """Change plot time window for all tracks.

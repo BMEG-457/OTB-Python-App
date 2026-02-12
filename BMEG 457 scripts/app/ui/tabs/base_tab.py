@@ -79,6 +79,11 @@ class BaseTab(QtWidgets.QWidget, metaclass=_ABCQWidgetMeta):
         """
         pass
     
+    def connect_signals(self, window):
+        """Connect this tab's signals to handlers on the parent window.
+        Override in subclasses that have buttons. Default does nothing."""
+        pass
+
     def create_scroll_area(self) -> tuple[QtWidgets.QScrollArea, QtWidgets.QWidget, QtWidgets.QVBoxLayout]:
         """
         Utility method to create a standard scroll area setup.

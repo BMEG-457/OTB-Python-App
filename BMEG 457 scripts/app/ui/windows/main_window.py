@@ -11,7 +11,7 @@ from app.data.data_receiver import DataReceiverThread
 from app.processing import filters, transforms
 from app.processing.pipeline import get_pipeline
 from app.ui.dialogs.dialogs import CalibrationDialog, ChannelSelectorDialog, TrackVisibilityDialog
-from app.ui.tabs.tab_implementations import AllTracksTab, HDsEMGTab, FeaturesTab, HeatmapTab
+from app.ui.tabs.tab_implementations import AllTracksTab, HeatmapTab
 from app.managers.recording_manager import RecordingManager
 from app.managers.streaming_controller import StreamingController
 from app.managers.track_manager import TrackManager
@@ -111,16 +111,21 @@ class SoundtrackWindow(QtWidgets.QWidget):
         self.main_layout.addWidget(top_bar)
 
     def _create_tabs(self):
-        """Create all visualization tabs using BaseTab implementations."""
+        """Create all visualization tabs. Add or remove tabs by editing this list."""
         self.tabs = QtWidgets.QTabWidget()
-
-        self.all_tracks_tab = AllTracksTab()
-        self.hdsemg_tab = HDsEMGTab()
-        self.features_tab = FeaturesTab()
-        self.heatmap_tab = HeatmapTab()
-
-        for tab in [self.all_tracks_tab, self.hdsemg_tab, self.features_tab, self.heatmap_tab]:
+        self.tab_list = [
+            AllTracksTab(),
+            HeatmapTab(),
+        ]
+        for tab in self.tab_list:
             self.tabs.addTab(tab, tab.get_tab_name())
+
+    def _get_tab(self, tab_class):
+        """Get a tab instance by its class type, or None if not present."""
+        for tab in self.tab_list:
+            if isinstance(tab, tab_class):
+                return tab
+        return None
 
     def _initialize_managers(self):
         """Initialize manager components."""
@@ -134,16 +139,12 @@ class SoundtrackWindow(QtWidgets.QWidget):
         self.track_manager = TrackManager(
             self.device,
             Config.DEFAULT_PLOT_TIME,
-            self.all_tracks_tab.scroll_layout,
-            self.hdsemg_tab.hdsemg_scroll_layout,
-            self.features_tab.feature_scroll_layout
+            self._get_tab(AllTracksTab).scroll_layout
         )
-        
+
         # Get tracks reference for compatibility
         self.tracks = self.track_manager.tracks
         self.hdsemg_track = self.track_manager.hdsemg_track
-        self.hd_average_track = self.track_manager.hd_average_track
-        self.hd_average_channels = self.track_manager.hd_average_channels
 
         # Recording Manager
         self.recording_manager = RecordingManager(max_samples=1000000)
@@ -158,13 +159,9 @@ class SoundtrackWindow(QtWidgets.QWidget):
 
     def _connect_signals(self):
         """Connect all UI signals to handlers. Note: calibrate/stream/record buttons are wired in main.py."""
-        # These buttons are wired in main.py to handle device initialization:
-        # - self.calibrate_button
-        # - self.stream_button
-        # - self.record_button
-        self.all_tracks_tab.select_channels_button.clicked.connect(self.open_channel_selector)
-        self.all_tracks_tab.select_tracks_button.clicked.connect(self.open_track_selector)
-        self.hdsemg_tab.hd_average_select_button.clicked.connect(self.open_hd_average_selector)
+        # Let each tab wire its own buttons
+        for tab in self.tab_list:
+            tab.connect_signals(self)
 
     def _configure_pipelines(self):
         """Configure processing pipelines."""
@@ -236,7 +233,9 @@ class SoundtrackWindow(QtWidgets.QWidget):
             if len(current_rms) >= 64 and len(self.mvc_rms) >= 64:
                 normalized_rms = current_rms[:64] / (self.mvc_rms[:64] + 1e-10)
                 normalized_rms = np.clip(normalized_rms, 0, 1)
-                self.heatmap_tab.update_heatmap(normalized_rms)
+                heatmap_tab = self._get_tab(HeatmapTab)
+                if heatmap_tab:
+                    heatmap_tab.update_heatmap(normalized_rms)
         except Exception:
             pass
 
@@ -246,8 +245,6 @@ class SoundtrackWindow(QtWidgets.QWidget):
         # Timer is controlled by streaming_controller, so this implicitly respects streaming state
         if not self.is_paused:  # Only respect manual pause button
             self.track_manager.draw_all_tracks()
-            self.track_manager.update_hd_channel_tracks()
-            self.track_manager.update_hd_average()
             self.update_heatmap()
 
     def toggle_streaming(self):
@@ -383,17 +380,6 @@ class SoundtrackWindow(QtWidgets.QWidget):
         if dlg.exec_() == QtWidgets.QDialog.Accepted:
             sel = dlg.selected_titles()
             self.track_manager.set_track_visibility(sel)
-
-    def open_hd_average_selector(self):
-        """Open HD average channel selector dialog."""
-        if self.hdsemg_track is None:
-            return
-        num = self.hdsemg_track.num_channels
-        current = self.hd_average_channels
-        dlg = ChannelSelectorDialog(self, num, selected=current)
-        if dlg.exec_() == QtWidgets.QDialog.Accepted:
-            sel = dlg.selected_indices()
-            self.track_manager.hd_average_channels = sorted(sel)
 
     def open_calibration_dialog(self):
         """Open calibration dialog. This method should be overridden/wrapped in main.py to handle receiver initialization."""

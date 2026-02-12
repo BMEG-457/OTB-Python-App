@@ -8,16 +8,18 @@ from app.core.track import Track
 class TrackManager:
     """Manages initialization and organization of EMG signal tracks."""
     
-    def __init__(self, device, plot_time, scroll_layout, hdsemg_scroll_layout=None, feature_scroll_layout=None):
+    def __init__(self, device, plot_time, scroll_layout, hdsemg_scroll_layout=None, feature_scroll_layout=None, accessory_scroll_layout=None):
         self.device = device
         self.plot_time = plot_time
         self.scroll_layout = scroll_layout
         self.hdsemg_scroll_layout = hdsemg_scroll_layout
         self.feature_scroll_layout = feature_scroll_layout
+        self.accessory_scroll_layout = accessory_scroll_layout
         
         # Track storage
         self.tracks = []
         self.track_containers = []
+        self.accessory_containers = []
         self.hdsemg_track = None
         self.hd_channel_tracks = []
         self.hd_channel_containers = []
@@ -74,8 +76,14 @@ class TrackManager:
 
             track.plot_widget.setMinimumHeight(300)
             layout.addWidget(track.plot_widget)
-            self.scroll_layout.addWidget(track_container)
-            self.track_containers.append((title, track_container))
+
+            is_accessory = "HDsEMG" not in title
+            if is_accessory and self.accessory_scroll_layout is not None:
+                self.accessory_scroll_layout.addWidget(track_container)
+                self.accessory_containers.append((title, track_container))
+            else:
+                self.scroll_layout.addWidget(track_container)
+                self.track_containers.append((title, track_container))
 
             # Store reference to HDsEMG main track
             if "HDsEMG" in title:
@@ -102,6 +110,8 @@ class TrackManager:
         self.scroll_layout.addStretch()
         if self.hdsemg_scroll_layout is not None:
             self.hdsemg_scroll_layout.addStretch()
+        if self.accessory_scroll_layout is not None:
+            self.accessory_scroll_layout.addStretch()
     
     def change_plot_time(self, new_time):
         """Change plot time window for all tracks.
@@ -179,19 +189,23 @@ class TrackManager:
         for track in self.tracks:
             track.draw()
     
+    def _all_containers(self):
+        """Get all track containers (main + accessory)."""
+        return self.track_containers + self.accessory_containers
+
     def get_track_titles(self):
         """Get list of all track titles."""
-        return [title for title, _ in self.track_containers]
-    
+        return [title for title, _ in self._all_containers()]
+
     def set_track_visibility(self, selected_titles):
         """Set which tracks are visible.
-        
+
         Args:
             selected_titles: List of track titles to show
         """
-        for title, widget in self.track_containers:
+        for title, widget in self._all_containers():
             widget.setVisible(title in selected_titles)
-    
+
     def get_visible_track_titles(self):
         """Get list of currently visible track titles."""
-        return [title for title, widget in self.track_containers if widget.isVisible()]
+        return [title for title, widget in self._all_containers() if widget.isVisible()]

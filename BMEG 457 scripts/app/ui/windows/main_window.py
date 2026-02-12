@@ -11,7 +11,7 @@ from app.data.data_receiver import DataReceiverThread
 from app.processing import filters, transforms
 from app.processing.pipeline import get_pipeline
 from app.ui.dialogs.dialogs import CalibrationDialog, ChannelSelectorDialog, TrackVisibilityDialog
-from app.ui.tabs.tab_implementations import AllTracksTab, HeatmapTab
+from app.ui.tabs.tab_implementations import AllTracksTab, AccessoryTab, HeatmapTab
 from app.managers.recording_manager import RecordingManager
 from app.managers.streaming_controller import StreamingController
 from app.managers.track_manager import TrackManager
@@ -115,6 +115,7 @@ class SoundtrackWindow(QtWidgets.QWidget):
         self.tabs = QtWidgets.QTabWidget()
         self.tab_list = [
             AllTracksTab(),
+            AccessoryTab(),
             HeatmapTab(),
         ]
         for tab in self.tab_list:
@@ -136,10 +137,12 @@ class SoundtrackWindow(QtWidgets.QWidget):
         # self.timer.start(Config.UPDATE_RATE)
 
         # Track Manager
+        accessory_tab = self._get_tab(AccessoryTab)
         self.track_manager = TrackManager(
             self.device,
             Config.DEFAULT_PLOT_TIME,
-            self._get_tab(AllTracksTab).scroll_layout
+            self._get_tab(AllTracksTab).scroll_layout,
+            accessory_scroll_layout=accessory_tab.accessory_scroll_layout if accessory_tab else None
         )
 
         # Get tracks reference for compatibility

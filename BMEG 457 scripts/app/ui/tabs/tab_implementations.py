@@ -8,6 +8,24 @@ import numpy as np
 from app.ui.tabs.base_tab import BaseTab
 
 
+class AccessoryTab(BaseTab):
+    """Accessory tab for non-EMG tracks (AUX, Quaternions, Buffer, Ramp)."""
+
+    def __init__(self, parent=None):
+        self.accessory_scroll_layout = None
+        super().__init__(parent)
+
+    def create_content_area(self) -> QtWidgets.QWidget:
+        scroll_area, scroll_widget, self.accessory_scroll_layout = self.create_scroll_area()
+        return scroll_area
+
+    def create_control_panel(self) -> QtWidgets.QWidget:
+        return self.create_control_panel_base()
+
+    def get_tab_name(self) -> str:
+        return "Accessory"
+
+
 class HeatmapTab(BaseTab):
     """
     Heatmap tab implementation following the BaseTab interface.

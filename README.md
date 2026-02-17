@@ -191,6 +191,22 @@ Configure in the Data Analysis window UI:
 - **Lowpass Cutoff**: Cutoff frequency in Hz for lowpass envelope filter (default: 10 Hz)
 - **Rectification**: Toggle full-wave rectification before envelope processing
 
+## Building an Executable
+
+To distribute the application as a standalone Windows executable:
+
+1. Install PyInstaller:
+```bash
+pip install pyinstaller
+```
+
+2. Run the build script from the repo root:
+```bash
+python build.py
+```
+
+3. The executable is output to `dist/OTB-EMG/`. Distribute the entire `OTB-EMG` folder. Recordings and calibration data are stored next to the executable at runtime.
+
 ## Architecture
 
 ### Project Structure
@@ -202,6 +218,7 @@ BMEG 457 scripts/
 │   ├── core/              # Core classes
 │   │   ├── config.py      # Configuration constants
 │   │   ├── device.py      # Device abstraction
+│   │   ├── paths.py       # Path resolution (handles frozen exe vs source)
 │   │   ├── track.py       # Signal track visualization (live mode)
 │   │   └── analysis_track.py  # Static data visualization (analysis mode)
 │   │

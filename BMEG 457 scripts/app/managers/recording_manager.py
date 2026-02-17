@@ -6,6 +6,8 @@ from datetime import datetime
 import os
 import time
 
+from app.core.paths import get_recordings_dir
+
 
 class RecordingManager(QtCore.QObject):
     """Manages recording state and CSV export for EMG data."""
@@ -101,9 +103,8 @@ class RecordingManager(QtCore.QObject):
         
         try:
             # Create recordings directory if it doesn't exist
-            recordings_dir = "recordings"
-            if not os.path.exists(recordings_dir):
-                os.makedirs(recordings_dir)
+            recordings_dir = get_recordings_dir()
+            os.makedirs(recordings_dir, exist_ok=True)
             
             # Generate filename with timestamp
             timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")

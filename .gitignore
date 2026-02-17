@@ -31,7 +31,6 @@ venv.bak/
 
 # PyInstaller
 *.manifest
-*.spec
 
 # Unit test / coverage
 .tox/

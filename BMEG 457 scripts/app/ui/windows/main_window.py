@@ -7,6 +7,7 @@ import csv
 import os
 
 from app.core.config import Config
+from app.core.paths import get_data_dir
 from app.data.data_receiver import DataReceiverThread
 from app.processing import filters, transforms
 from app.processing.pipeline import get_pipeline
@@ -421,9 +422,9 @@ class SoundtrackWindow(QtWidgets.QWidget):
         """Load configuration and calibrated values from previous session CSV file."""
         try:
             # Get path to CSV file
-            data_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'data')
+            data_dir = get_data_dir()
             csv_path = os.path.join(data_dir, 'previous_session.csv')
-            
+
             if not os.path.exists(csv_path):
                 print("[SESSION] No previous session file found")
                 return
@@ -526,7 +527,7 @@ class SoundtrackWindow(QtWidgets.QWidget):
         """Save configuration and calibrated values to CSV file."""
         try:
             # Ensure data directory exists
-            data_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), 'data')
+            data_dir = get_data_dir()
             os.makedirs(data_dir, exist_ok=True)
             
             csv_path = os.path.join(data_dir, 'previous_session.csv')

@@ -4,6 +4,7 @@ from PyQt5 import QtWidgets, QtCore, QtGui
 import pyqtgraph as pg
 import os
 
+from app.core.paths import get_recordings_dir
 from app.data.csv_loader import CSVDataLoader
 from app.managers.analysis_track_manager import AnalysisTrackManager
 from app.managers.time_navigation_controller import TimeNavigationController
@@ -247,8 +248,7 @@ class DataAnalysisWindow(QtWidgets.QWidget):
     def open_file_dialog(self):
         """Show file picker for CSV files."""
         # Default to recordings directory
-        recordings_dir = os.path.join(os.path.dirname(os.path.dirname(
-            os.path.dirname(os.path.dirname(os.path.dirname(__file__))))), 'recordings')
+        recordings_dir = get_recordings_dir()
 
         if not os.path.exists(recordings_dir):
             recordings_dir = ""
@@ -549,8 +549,7 @@ class DataAnalysisWindow(QtWidgets.QWidget):
         ch1_idx = selected[0]
 
         # Open file dialog for the second CSV
-        recordings_dir = os.path.join(os.path.dirname(os.path.dirname(
-            os.path.dirname(os.path.dirname(os.path.dirname(__file__))))), 'recordings')
+        recordings_dir = get_recordings_dir()
         if not os.path.exists(recordings_dir):
             recordings_dir = ""
 

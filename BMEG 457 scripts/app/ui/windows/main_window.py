@@ -11,11 +11,14 @@ from app.core.paths import get_data_dir
 from app.data.data_receiver import DataReceiverThread
 from app.processing import filters, transforms
 from app.processing.pipeline import get_pipeline
-from app.ui.dialogs.dialogs import CalibrationDialog, ChannelSelectorDialog, TrackVisibilityDialog
-from app.ui.tabs.tab_implementations import AllTracksTab, AccessoryTab, HeatmapTab
+from app.ui.dialogs.dialogs import CalibrationDialog, ChannelSelectorDialog, TrackVisibilityDialog, FeatureControlsDialog
+from app.ui.tabs.tab_implementations import AllTracksTab, AccessoryTab, HeatmapTab, IndividualChannelsTab, FeaturesTab
+from app.processing.features import median_frequency_window
+from app.core.track import Track
 from app.managers.recording_manager import RecordingManager
 from app.managers.streaming_controller import StreamingController
 from app.managers.track_manager import TrackManager
+from app.processing.realtime_detector import ContractionDetector
 
 
 class SoundtrackWindow(QtWidgets.QWidget):
@@ -32,6 +35,9 @@ class SoundtrackWindow(QtWidgets.QWidget):
         self.baseline_rms = None
         self.threshold = None
         self.mvc_rms = None
+
+        # Contraction detection
+        self.contraction_detector = None
         
         # Load previous session data if available
         self.load_session_data()
@@ -107,7 +113,21 @@ class SoundtrackWindow(QtWidgets.QWidget):
         # Status label
         self.status_label = QtWidgets.QLabel("Ready")
         top_bar_layout.addWidget(self.status_label)
+
+        # Contraction indicator
+        top_bar_layout.addSpacing(20)
+        self.contraction_led = QtWidgets.QLabel("●")
+        self.contraction_led.setStyleSheet("color: #808080; font-size: 22px;")
+        self.contraction_status_label = QtWidgets.QLabel("Not Calibrated")
+        top_bar_layout.addWidget(self.contraction_led)
+        top_bar_layout.addWidget(self.contraction_status_label)
+
         top_bar_layout.addStretch()
+
+        # If previous session had calibration, initialize indicator to ready state
+        if self.is_calibrated:
+            self.contraction_detector = ContractionDetector()
+            self._update_contraction_indicator(False)
 
         self.main_layout.addWidget(top_bar)
 
@@ -116,6 +136,8 @@ class SoundtrackWindow(QtWidgets.QWidget):
         self.tabs = QtWidgets.QTabWidget()
         self.tab_list = [
             AllTracksTab(),
+            IndividualChannelsTab(),
+            FeaturesTab(),
             AccessoryTab(),
             HeatmapTab(),
         ]
@@ -139,16 +161,40 @@ class SoundtrackWindow(QtWidgets.QWidget):
 
         # Track Manager
         accessory_tab = self._get_tab(AccessoryTab)
+        individual_tab = self._get_tab(IndividualChannelsTab)
         self.track_manager = TrackManager(
             self.device,
             Config.DEFAULT_PLOT_TIME,
             self._get_tab(AllTracksTab).scroll_layout,
-            accessory_scroll_layout=accessory_tab.accessory_scroll_layout if accessory_tab else None
+            accessory_scroll_layout=accessory_tab.accessory_scroll_layout if accessory_tab else None,
+            individual_channels_scroll_layout=individual_tab.individual_scroll_layout if individual_tab else None,
         )
 
         # Get tracks reference for compatibility
         self.tracks = self.track_manager.tracks
         self.hdsemg_track = self.track_manager.hdsemg_track
+
+        # Feature tracks (low-rate, 30 Hz, 10-second rolling history)
+        _FEATURE_RATE = 30
+        _FEATURE_PLOT_TIME = 10
+        self.feature_window_ms = 200
+        self._contraction_times = []
+        features_tab = self._get_tab(FeaturesTab)
+        if features_tab is not None:
+            feature_layout = features_tab.feature_scroll_layout
+            self.rms_feature_track = Track("Mean RMS (µV)", _FEATURE_RATE, 1, 0, 1.0, _FEATURE_PLOT_TIME)
+            self.mf_feature_track = Track("Median Frequency (Hz)", _FEATURE_RATE, 1, 0, 1.0, _FEATURE_PLOT_TIME)
+            self.rate_feature_track = Track("Contraction Rate (per min)", _FEATURE_RATE, 1, 0, 1.0, _FEATURE_PLOT_TIME)
+            for _ft in (self.rms_feature_track, self.mf_feature_track, self.rate_feature_track):
+                _ft.plot_widget.setMinimumHeight(200)
+                _c = QtWidgets.QWidget()
+                QtWidgets.QVBoxLayout(_c).addWidget(_ft.plot_widget)
+                feature_layout.addWidget(_c)
+            feature_layout.addStretch()
+        else:
+            self.rms_feature_track = None
+            self.mf_feature_track = None
+            self.rate_feature_track = None
 
         # Recording Manager
         self.recording_manager = RecordingManager(max_samples=1000000)
@@ -240,16 +286,38 @@ class SoundtrackWindow(QtWidgets.QWidget):
                 heatmap_tab = self._get_tab(HeatmapTab)
                 if heatmap_tab:
                     heatmap_tab.update_heatmap(normalized_rms)
+                if self.contraction_detector is not None:
+                    changed = self.contraction_detector.update(normalized_rms)
+                    if changed and self.contraction_detector.is_contracting:
+                        import time as _time
+                        self._contraction_times.append(_time.monotonic())
+                    self._update_contraction_indicator(self.contraction_detector.is_contracting)
         except Exception:
             pass
 
+    def _update_contraction_indicator(self, is_contracting: bool):
+        """Update the LED and label to reflect current contraction state."""
+        if not self.is_calibrated:
+            self.contraction_led.setStyleSheet("color: #808080; font-size: 22px;")
+            self.contraction_status_label.setText("Not Calibrated")
+        elif is_contracting:
+            self.contraction_led.setStyleSheet("color: #FF4444; font-size: 22px;")
+            self.contraction_status_label.setText("Contracting!")
+        else:
+            self.contraction_led.setStyleSheet("color: #00CC44; font-size: 22px;")
+            self.contraction_status_label.setText("Relaxed")
+
+    def change_group_preset(self, preset):
+        """Switch the HDsEMG group average preset shown in AllTracksTab."""
+        self.track_manager.set_group_preset(preset)
+
     def update_plot(self):
         """Main plot update loop - draws whenever timer is running."""
-        # Simplified logic: if timer is running, draw plots
-        # Timer is controlled by streaming_controller, so this implicitly respects streaming state
-        if not self.is_paused:  # Only respect manual pause button
+        if not self.is_paused:
             self.track_manager.draw_all_tracks()
+            self.track_manager.update_group_averages()
             self.update_heatmap()
+            self.update_features()
 
     def toggle_streaming(self):
         """Toggle streaming on/off."""
@@ -262,6 +330,10 @@ class SoundtrackWindow(QtWidgets.QWidget):
         if self.streaming_controller.is_streaming:
             self.streaming_controller.stop_streaming()
             self.stream_button.setText("Start Live Stream")
+            if self.contraction_detector is not None:
+                self.contraction_detector.reset()
+                self._update_contraction_indicator(False)
+            self._contraction_times.clear()
         else:
             self.streaming_controller.start_streaming()
             self.stream_button.setText("Stop Live Stream")
@@ -355,14 +427,42 @@ class SoundtrackWindow(QtWidgets.QWidget):
         self.receiver_thread.status_update.connect(self.update_status)
         self.receiver_thread.error_signal.connect(self.show_error)
         self.receiver_thread.stage_output.connect(self.recording_manager.on_data_for_recording)
-        print("[INIT] stage_output signal connected to recording_manager.on_data_for_recording")
-        # DON'T start thread here - let streaming controller manage it
+        self.receiver_thread.finished.connect(self.on_receiver_finished)
         print("[INIT] Receiver thread created but not started yet")
 
         # Initialize streaming controller now that receiver is ready
         self.streaming_controller = StreamingController(self.timer, self.receiver_thread)
         self.streaming_controller.status_update.connect(self.update_status)
         print("[INIT] Streaming controller initialized")
+
+    def on_receiver_finished(self):
+        # Called when the receiver thread exits. Only act if the thread died while
+        # streaming was active (unexpected exit); normal stop sets is_streaming=False first.
+        if self.streaming_controller and self.streaming_controller.is_streaming:
+            self.streaming_controller.is_streaming = False
+            self.streaming_controller.is_paused = True
+            self.timer.stop()
+            self.stream_button.setText("Start Live Stream")
+            if self.contraction_detector is not None:
+                self.contraction_detector.reset()
+                self._update_contraction_indicator(False)
+            self.update_status("Connection lost. Click 'Start Live Stream' to reconnect.")
+
+    def reinitialize_receiver(self):
+        # Stop old thread cleanly if still alive (e.g. slow exit after error).
+        if self.receiver_thread is not None and self.receiver_thread.isRunning():
+            self.receiver_thread.stop()
+            self.receiver_thread.wait(2000)
+
+        # Create fresh thread with updated socket (set_client_socket called before this).
+        self.receiver_thread = DataReceiverThread(self.device, self.client_socket, self.tracks)
+        self.receiver_thread.status_update.connect(self.update_status)
+        self.receiver_thread.error_signal.connect(self.show_error)
+        self.receiver_thread.stage_output.connect(self.recording_manager.on_data_for_recording)
+        self.receiver_thread.finished.connect(self.on_receiver_finished)
+
+        if self.streaming_controller is not None:
+            self.streaming_controller.receiver_thread = self.receiver_thread
 
     def open_channel_selector(self):
         """Open channel selector dialog."""
@@ -385,6 +485,53 @@ class SoundtrackWindow(QtWidgets.QWidget):
             sel = dlg.selected_titles()
             self.track_manager.set_track_visibility(sel)
 
+    def open_feature_controls(self):
+        """Open dialog to configure feature computation window size."""
+        dlg = FeatureControlsDialog(self, self.feature_window_ms)
+        if dlg.exec_() == QtWidgets.QDialog.Accepted:
+            self.feature_window_ms = dlg.selected_window_ms()
+
+    def update_features(self):
+        """Compute RMS, median frequency, and contraction rate; feed into feature tracks."""
+        if self.rms_feature_track is None or self.hdsemg_track is None:
+            return
+        import time as _time
+        window_samples = int(self.feature_window_ms * self.device.frequency / 1000)
+        buf = self.hdsemg_track.buffer
+        if buf.shape[1] < window_samples:
+            return
+
+        # Filter saturated channels before computing
+        window = buf[:, -window_samples:]
+        mask = np.all(np.abs(window) < 32760, axis=1)
+        if not mask.any():
+            return
+        clean = window[mask, :]
+
+        # Mean RMS in µV
+        raw_rms = float(np.sqrt(np.mean(clean ** 2)))
+        rms_uv = raw_rms * self.hdsemg_track.conv_fact * 1e6
+        self.rms_feature_track.feed(np.array([[rms_uv]]))
+        self.rms_feature_track.draw()
+
+        # Median frequency (minimum 500ms window for frequency resolution)
+        if self.mf_feature_track is not None:
+            mf_samples = max(window_samples, int(0.5 * self.device.frequency))
+            if buf.shape[1] >= mf_samples:
+                mf_window = buf[:, -mf_samples:]
+                signal_mean = np.mean(mf_window[mask, :], axis=0)
+                mf_hz = median_frequency_window(signal_mean, self.device.frequency)
+                self.mf_feature_track.feed(np.array([[mf_hz]]))
+                self.mf_feature_track.draw()
+
+        # Contraction rate (contractions per minute in the last 60 seconds)
+        if self.rate_feature_track is not None:
+            now = _time.monotonic()
+            self._contraction_times = [t for t in self._contraction_times if now - t <= 60.0]
+            rate = float(len(self._contraction_times))
+            self.rate_feature_track.feed(np.array([[rate]]))
+            self.rate_feature_track.draw()
+
     def open_calibration_dialog(self):
         """Open calibration dialog. This method should be overridden/wrapped in main.py to handle receiver initialization."""
         if self.receiver_thread is None:
@@ -402,7 +549,11 @@ class SoundtrackWindow(QtWidgets.QWidget):
         self.threshold = threshold
         self.mvc_rms = mvc_rms
         self.is_calibrated = True
-        
+
+        # Initialize (or reset) contraction detector with new calibration
+        self.contraction_detector = ContractionDetector()
+        self._update_contraction_indicator(False)
+
         # Display summary
         mean_baseline = np.mean(baseline_rms)
         mean_threshold = np.mean(threshold)

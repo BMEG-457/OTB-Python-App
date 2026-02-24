@@ -68,30 +68,36 @@ def main():
     # Toggle streaming handler
     def handle_stream_toggle():
         try:
-            # Check if we need to initialize the device connection first
-            if live_data_window.receiver_thread is None:
+            needs_init = live_data_window.receiver_thread is None
+            needs_reinit = (
+                live_data_window.receiver_thread is not None and
+                not live_data_window.receiver_thread.isRunning()
+            )
+
+            if needs_init or needs_reinit:
                 print("=" * 60)
                 print("Sessantaquattro+ Python Receiver")
                 print("=" * 60)
-                
-                # Create command
+
                 command = device.create_command(FSAMP=2, NCH=3, MODE=0,
                                                HRES=0, HPF=1, EXTEN=0,
                                                TRIG=0, REC=0, GO=1)
-                
+
                 print("\nStarting TCP server...")
-                device.start_server()   # <-- Connect here
-                
+                device.start_server()
+
                 print("\nSending start command...")
                 device.send_command(command)
-                
+
                 print("\nInitializing visualization...")
                 print("=" * 60)
-                
-                live_data_window.set_client_socket(device.client_socket)
-                live_data_window.initialize_receiver()
 
-            # Toggle streaming state
+                live_data_window.set_client_socket(device.client_socket)
+                if needs_init:
+                    live_data_window.initialize_receiver()
+                else:
+                    live_data_window.reinitialize_receiver()
+
             live_data_window.toggle_streaming()
 
         except Exception as e:
@@ -100,30 +106,36 @@ def main():
     # Toggle recording handler
     def handle_record_toggle():
         try:
-            # Check if we need to initialize the device connection first
-            if live_data_window.receiver_thread is None:
+            needs_init = live_data_window.receiver_thread is None
+            needs_reinit = (
+                live_data_window.receiver_thread is not None and
+                not live_data_window.receiver_thread.isRunning()
+            )
+
+            if needs_init or needs_reinit:
                 print("=" * 60)
                 print("Sessantaquattro+ Python Receiver")
                 print("=" * 60)
-                
-                # Create command
+
                 command = device.create_command(FSAMP=2, NCH=3, MODE=0,
                                                HRES=0, HPF=1, EXTEN=0,
                                                TRIG=0, REC=0, GO=1)
-                
+
                 print("\nStarting TCP server...")
-                device.start_server()   # <-- Connect here
-                
+                device.start_server()
+
                 print("\nSending start command...")
                 device.send_command(command)
-                
+
                 print("\nInitializing visualization...")
                 print("=" * 60)
-                
-                live_data_window.set_client_socket(device.client_socket)
-                live_data_window.initialize_receiver()
 
-            # Toggle recording state
+                live_data_window.set_client_socket(device.client_socket)
+                if needs_init:
+                    live_data_window.initialize_receiver()
+                else:
+                    live_data_window.reinitialize_receiver()
+
             live_data_window.toggle_recording()
 
         except Exception as e:
@@ -132,30 +144,36 @@ def main():
     # Calibration handler
     def handle_calibration():
         try:
-            # Check if we need to initialize the device connection first
-            if live_data_window.receiver_thread is None:
+            needs_init = live_data_window.receiver_thread is None
+            needs_reinit = (
+                live_data_window.receiver_thread is not None and
+                not live_data_window.receiver_thread.isRunning()
+            )
+
+            if needs_init or needs_reinit:
                 print("=" * 60)
                 print("Sessantaquattro+ Python Receiver")
                 print("=" * 60)
-                
-                # Create command
+
                 command = device.create_command(FSAMP=2, NCH=3, MODE=0,
                                                HRES=0, HPF=1, EXTEN=0,
                                                TRIG=0, REC=0, GO=1)
-                
+
                 print("\nStarting TCP server...")
-                device.start_server()   # <-- Connect here
-                
+                device.start_server()
+
                 print("\nSending start command...")
                 device.send_command(command)
-                
+
                 print("\nInitializing visualization...")
                 print("=" * 60)
-                
-                live_data_window.set_client_socket(device.client_socket)
-                live_data_window.initialize_receiver()
 
-            # Open calibration dialog
+                live_data_window.set_client_socket(device.client_socket)
+                if needs_init:
+                    live_data_window.initialize_receiver()
+                else:
+                    live_data_window.reinitialize_receiver()
+
             live_data_window.open_calibration_dialog()
 
         except Exception as e:

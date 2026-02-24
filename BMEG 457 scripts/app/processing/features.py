@@ -14,6 +14,15 @@ import numpy as np
 def rms(data):
     return np.sqrt(np.mean(data**2, axis=1, keepdims=True))
 
+
+def median_frequency_window(signal, fs):
+    """Compute median frequency of a 1D signal using Hamming-windowed FFT."""
+    windowed = signal * np.hamming(len(signal))
+    spectrum = np.abs(np.fft.rfft(windowed)) ** 2
+    freqs = np.fft.rfftfreq(len(signal), 1.0 / fs)
+    cumsum = np.cumsum(spectrum)
+    return float(freqs[np.searchsorted(cumsum, cumsum[-1] / 2)])
+
 def integrated_emg(data):
     return np.sum(np.abs(data), axis=1, keepdims=True)
 

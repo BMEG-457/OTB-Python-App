@@ -407,3 +407,31 @@ class TrackVisibilityDialog(QtWidgets.QDialog):
     def selected_titles(self):
         """Return list of selected track titles."""
         return [cb.text() for cb in self.checkboxes if cb.isChecked()]
+
+
+class FeatureControlsDialog(QtWidgets.QDialog):
+    """Dialog for configuring feature computation window size."""
+
+    WINDOW_OPTIONS = [100, 200, 500, 1000]
+
+    def __init__(self, parent, current_window_ms):
+        super().__init__(parent)
+        self.setWindowTitle("Feature Controls")
+        layout = QtWidgets.QFormLayout(self)
+
+        self.window_combo = QtWidgets.QComboBox()
+        for ms in self.WINDOW_OPTIONS:
+            self.window_combo.addItem(f"{ms} ms")
+        idx = self.WINDOW_OPTIONS.index(current_window_ms) if current_window_ms in self.WINDOW_OPTIONS else 1
+        self.window_combo.setCurrentIndex(idx)
+        layout.addRow("Computation window:", self.window_combo)
+
+        buttons = QtWidgets.QDialogButtonBox(
+            QtWidgets.QDialogButtonBox.Ok | QtWidgets.QDialogButtonBox.Cancel
+        )
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addRow(buttons)
+
+    def selected_window_ms(self):
+        return self.WINDOW_OPTIONS[self.window_combo.currentIndex()]

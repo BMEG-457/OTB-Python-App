@@ -106,41 +106,67 @@ class HeatmapTab(BaseTab):
             self.heatmap_img.setImage(self.heatmap_data.T, levels=(0, 1))
 
 
+_PRESET_MAP = {
+    "2x2 Blocks (16)": "2x2_blocks",
+    "Row Averages (8)": "rows",
+    "Column Averages (8)": "columns",
+}
+
+
 class AllTracksTab(BaseTab):
     """
     All Tracks tab implementation following the BaseTab interface.
-    Displays all data tracks with channel and track selection controls.
+    Displays HDsEMG group average presets with a selector for switching views.
     """
 
     def __init__(self, parent=None):
         self.scroll_layout = None
-        self.select_channels_button = None
-        self.select_tracks_button = None
+        self.preset_selector = None
         super().__init__(parent)
-    
+
     def create_content_area(self) -> QtWidgets.QWidget:
         """Create the scrollable area for all tracks."""
         scroll_area, scroll_widget, self.scroll_layout = self.create_scroll_area()
         return scroll_area
-    
-    def create_control_panel(self) -> QtWidgets.QWidget:
-        """Create control panel with channel and track selection."""
-        self.select_channels_button = QtWidgets.QPushButton("Select Channels")
-        self.select_tracks_button = QtWidgets.QPushButton("Select Tracks")
 
-        return self.create_control_panel_base([
-            self.select_channels_button,
-            self.select_tracks_button
-        ])
-    
+    def create_control_panel(self) -> QtWidgets.QWidget:
+        """Create control panel with preset selector."""
+        self.preset_selector = QtWidgets.QComboBox()
+        self.preset_selector.addItems(list(_PRESET_MAP.keys()))
+        return self.create_control_panel_base([self.preset_selector])
+
     def connect_signals(self, window):
-        """Connect channel and track selector buttons."""
-        self.select_channels_button.clicked.connect(window.open_channel_selector)
-        self.select_tracks_button.clicked.connect(window.open_track_selector)
+        """Connect preset selector signal."""
+        self.preset_selector.currentTextChanged.connect(
+            lambda text: window.change_group_preset(_PRESET_MAP[text])
+        )
 
     def get_tab_name(self) -> str:
         """Return the tab display name."""
         return "All Tracks"
+
+
+class IndividualChannelsTab(BaseTab):
+    """Dedicated tab for viewing and selecting individual HDsEMG channels."""
+
+    def __init__(self, parent=None):
+        self.individual_scroll_layout = None
+        self.select_channels_button = None
+        super().__init__(parent)
+
+    def create_content_area(self) -> QtWidgets.QWidget:
+        scroll_area, scroll_widget, self.individual_scroll_layout = self.create_scroll_area()
+        return scroll_area
+
+    def create_control_panel(self) -> QtWidgets.QWidget:
+        self.select_channels_button = QtWidgets.QPushButton("Select Channels")
+        return self.create_control_panel_base([self.select_channels_button])
+
+    def connect_signals(self, window):
+        self.select_channels_button.clicked.connect(window.open_channel_selector)
+
+    def get_tab_name(self) -> str:
+        return "Channels"
 
 
 class HDsEMGTab(BaseTab):
@@ -191,7 +217,10 @@ class FeaturesTab(BaseTab):
         self.feature_controls_button = QtWidgets.QPushButton("Feature Controls")
 
         return self.create_control_panel_base([self.feature_controls_button])
-    
+
+    def connect_signals(self, window):
+        self.feature_controls_button.clicked.connect(window.open_feature_controls)
+
     def get_tab_name(self) -> str:
         """Return the tab display name."""
         return "Features"

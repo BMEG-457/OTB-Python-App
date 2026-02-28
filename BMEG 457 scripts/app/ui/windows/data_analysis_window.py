@@ -2,7 +2,9 @@
 
 from PyQt5 import QtWidgets, QtCore, QtGui
 import pyqtgraph as pg
+import csv
 import os
+from datetime import datetime
 
 from app.core.paths import get_recordings_dir
 from app.data.csv_loader import CSVDataLoader
@@ -28,6 +30,11 @@ class DataAnalysisWindow(QtWidgets.QWidget):
         self.track_manager = None
         self.time_controller = TimeNavigationController()
         self.total_duration = 0.0
+
+        # Last feature analysis results for export
+        self._last_feature_results = []   # list of (ch_idx, result) tuples
+        self._last_feature_type = None    # 'tkeo' | 'burst' | 'bilateral' | 'fatigue'
+        self._last_bilateral_meta = {}    # file/channel names for bilateral symmetry export
 
         self.setWindowTitle("Data Analysis")
         self.setGeometry(100, 100, 1200, 800)
@@ -244,6 +251,7 @@ class DataAnalysisWindow(QtWidgets.QWidget):
         self.features_panel.burst_duration_button.clicked.connect(self._on_burst_duration)
         self.features_panel.bilateral_symmetry_button.clicked.connect(self._on_bilateral_symmetry)
         self.features_panel.fatigue_analysis_button.clicked.connect(self._on_fatigue_analysis)
+        self.features_panel.export_button.clicked.connect(self._on_export_results)
 
     def open_file_dialog(self):
         """Show file picker for CSV files."""
@@ -422,6 +430,10 @@ class DataAnalysisWindow(QtWidgets.QWidget):
         sample_rate = self.csv_loader.sample_rate
         base_time = timestamps[0]
 
+        self._last_feature_results = []
+        self._last_feature_type = 'tkeo'
+        self._last_bilateral_meta = {}
+
         errors = []
         results_text_parts = []
         for ch_idx in selected:
@@ -436,6 +448,8 @@ class DataAnalysisWindow(QtWidgets.QWidget):
             if result is None:
                 errors.append(f"Channel {ch_idx + 1}")
                 continue
+
+            self._last_feature_results.append((ch_idx, result))
 
             title = f"TKEO Activation - Ch {ch_idx + 1} ({len(result.onset_times)} onsets)"
             self.track_manager.add_feature_track(
@@ -493,6 +507,10 @@ class DataAnalysisWindow(QtWidgets.QWidget):
         timestamps = self.csv_loader.timestamps
         sample_rate = self.csv_loader.sample_rate
 
+        self._last_feature_results = []
+        self._last_feature_type = 'burst'
+        self._last_bilateral_meta = {}
+
         errors = []
         results_text_parts = []
         for ch_idx in selected:
@@ -507,6 +525,8 @@ class DataAnalysisWindow(QtWidgets.QWidget):
             if result is None:
                 errors.append(f"Channel {ch_idx + 1}")
                 continue
+
+            self._last_feature_results.append((ch_idx, result))
 
             lines = [
                 f"Channel {ch_idx + 1}: Burst Duration Analysis",
@@ -610,6 +630,10 @@ class DataAnalysisWindow(QtWidgets.QWidget):
         self.track_manager.remove_feature_tracks()
         self.feature_results_text.clear()
 
+        self._last_feature_results = []
+        self._last_feature_type = 'bilateral'
+        self._last_bilateral_meta = {}
+
         result = compute_bilateral_symmetry(
             signal_1=signal_1,
             timestamps_1=timestamps_1,
@@ -626,6 +650,14 @@ class DataAnalysisWindow(QtWidgets.QWidget):
                 "The signals may be too short or contain invalid data."
             )
             return
+
+        self._last_feature_results = [(ch1_idx, result)]
+        self._last_bilateral_meta = {
+            'file1': os.path.basename(self.csv_loader.file_path),
+            'ch1_idx': ch1_idx,
+            'file2': os.path.basename(file_path_2),
+            'ch2_idx': ch2_idx,
+        }
 
         # Add feature track
         file1_name = os.path.basename(self.csv_loader.file_path)
@@ -714,6 +746,10 @@ class DataAnalysisWindow(QtWidgets.QWidget):
         sample_rate = self.csv_loader.sample_rate
         base_time = timestamps[0]
 
+        self._last_feature_results = []
+        self._last_feature_type = 'fatigue'
+        self._last_bilateral_meta = {}
+
         errors = []
         results_text_parts = []
         for ch_idx in selected:
@@ -728,6 +764,8 @@ class DataAnalysisWindow(QtWidgets.QWidget):
             if result is None:
                 errors.append(f"Channel {ch_idx + 1}")
                 continue
+
+            self._last_feature_results.append((ch_idx, result))
 
             # Add RMS trend as a feature track
             rms_title = f"Fatigue RMS - Ch {ch_idx + 1}"
@@ -864,6 +902,139 @@ class DataAnalysisWindow(QtWidgets.QWidget):
             normalized = self.time_controller.get_normalized_position()
             self.time_slider.setValue(int(normalized * 1000))
             self.time_slider.blockSignals(False)
+
+    def _on_export_results(self):
+        """Export processed signal and feature analysis results to CSV."""
+        if self.csv_loader is None or not self.csv_loader.is_loaded():
+            QtWidgets.QMessageBox.warning(self, "No Data", "Load a recording file first.")
+            return
+
+        default_name = os.path.splitext(
+            os.path.basename(self.csv_loader.file_path)
+        )[0] + "_export.csv"
+        path, _ = QtWidgets.QFileDialog.getSaveFileName(
+            self, "Export Analysis", default_name, "CSV files (*.csv)"
+        )
+        if not path:
+            return
+
+        try:
+            with open(path, 'w', newline='', encoding='utf-8') as f:
+                w = csv.writer(f)
+
+                # Metadata
+                ts = self.csv_loader.timestamps
+                w.writerow(['# OTB-EMG Analysis Export'])
+                w.writerow([f'# Source: {os.path.basename(self.csv_loader.file_path)}'])
+                w.writerow([f'# Exported: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}'])
+                w.writerow([f'# Channels: {self.csv_loader.data.shape[0]}'])
+                w.writerow([f'# Sample rate: {self.csv_loader.sample_rate:.1f} Hz'])
+                w.writerow([f'# Duration: {ts[-1] - ts[0]:.3f} s'])
+                w.writerow([])
+
+                # Processed signal for each selected channel
+                selected = self.track_manager.get_selected_channels() if self.track_manager else []
+                if selected:
+                    dvp = self.data_viewing_panel
+                    rectified = dvp.rectify_checkbox.isChecked()
+                    if dvp.envelope_rms_radio.isChecked():
+                        env_label = f"RMS ({dvp.rms_window_input.text()} samples)"
+                    elif dvp.envelope_lowpass_radio.isChecked():
+                        env_label = f"Lowpass ({dvp.lowpass_cutoff_input.text()} Hz)"
+                    else:
+                        env_label = "None"
+
+                    for ch_idx in selected:
+                        ch_name = self.csv_loader.channel_names[ch_idx]
+                        processed = self.track_manager.track.data[ch_idx, :]
+                        w.writerow([f'## PROCESSED SIGNAL ({ch_name})'])
+                        w.writerow([f'# Rectified: {rectified}'])
+                        w.writerow([f'# Envelope: {env_label}'])
+                        w.writerow(['time_s', 'emg_value'])
+                        for t, v in zip(ts, processed):
+                            w.writerow([round(float(t), 6), round(float(v), 8)])
+                        w.writerow([])
+
+                # Feature results
+                if self._last_feature_results:
+                    self._write_feature_csv(w)
+                else:
+                    w.writerow(['## No feature analysis has been run'])
+
+            QtWidgets.QMessageBox.information(self, "Export Complete", f"Saved to:\n{path}")
+
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(self, "Export Error", f"Export failed: {e}")
+
+    def _write_feature_csv(self, w):
+        """Write feature analysis results to the CSV writer."""
+        base_time = self.csv_loader.timestamps[0]
+
+        if self._last_feature_type == 'tkeo':
+            for ch_idx, result in self._last_feature_results:
+                w.writerow([f'## ACTIVATION TIMINGS (Channel {ch_idx + 1})'])
+                w.writerow([f'# Onsets detected: {len(result.onset_times)}'])
+                w.writerow([f'# Detection threshold: {result.detection_threshold:.8f}'])
+                w.writerow([f'# Backtrack threshold: {result.backtrack_threshold:.8f}'])
+                w.writerow(['onset_number', 'onset_time_s'])
+                for i, t in enumerate(result.onset_times):
+                    w.writerow([i + 1, round(float(t) - base_time, 6)])
+                w.writerow([])
+                w.writerow([f'## TKEO ENVELOPE (Channel {ch_idx + 1})'])
+                w.writerow(['time_s', 'tkeo_envelope'])
+                env_base = result.timestamps[0]
+                for t, v in zip(result.timestamps, result.tkeo_envelope):
+                    w.writerow([round(float(t) - env_base, 6), round(float(v), 10)])
+                w.writerow([])
+
+        elif self._last_feature_type == 'burst':
+            for ch_idx, result in self._last_feature_results:
+                w.writerow([f'## BURST DURATION (Channel {ch_idx + 1})'])
+                w.writerow([f'# Number of bursts: {result.num_bursts}'])
+                w.writerow([f'# Average duration: {result.avg_duration:.4f} s'])
+                w.writerow([f'# Std duration: {result.std_duration:.4f} s'])
+                w.writerow(['burst_number', 'duration_s'])
+                for i, d in enumerate(result.burst_durations):
+                    w.writerow([i + 1, round(float(d), 6)])
+                w.writerow([])
+
+        elif self._last_feature_type == 'bilateral':
+            meta = self._last_bilateral_meta
+            ch1_idx, result = self._last_feature_results[0]
+            w.writerow(['## BILATERAL SYMMETRY'])
+            w.writerow([f'# File 1: {meta.get("file1", "")}, Channel {meta.get("ch1_idx", 0) + 1}'])
+            w.writerow([f'# File 2: {meta.get("file2", "")}, Channel {meta.get("ch2_idx", 0) + 1}'])
+            w.writerow([f'# Overlap duration: {result.overlap_duration:.3f} s'])
+            w.writerow([f'# Window size: {result.window_duration:.3f} s'])
+            w.writerow([f'# Mean SI: {result.mean_si:+.6f}'])
+            w.writerow([f'# Std SI: {result.std_si:.6f}'])
+            w.writerow([f'# Max asymmetry: {result.max_asymmetry:.6f}'])
+            w.writerow([f'# Overall RMS File 1: {result.rms_file1:.8f}'])
+            w.writerow([f'# Overall RMS File 2: {result.rms_file2:.8f}'])
+            w.writerow(['time_s', 'symmetry_index'])
+            si_base = result.timestamps[0]
+            for t, v in zip(result.timestamps, result.symmetry_index):
+                w.writerow([round(float(t) - si_base, 6), round(float(v), 8)])
+            w.writerow([])
+
+        elif self._last_feature_type == 'fatigue':
+            for ch_idx, result in self._last_feature_results:
+                w.writerow([f'## FATIGUE ANALYSIS (Channel {ch_idx + 1})'])
+                w.writerow([f'# Baseline RMS: {result.baseline_rms:.8f}'])
+                if result.time_to_rms_fatigue is not None and len(result.time_to_rms_fatigue) > 0:
+                    w.writerow([f'# RMS fatigue onset: {result.time_to_rms_fatigue[0] - base_time:.3f} s'])
+                else:
+                    w.writerow(['# RMS fatigue onset: Not detected'])
+                if result.time_to_mf_fatigue is not None and len(result.time_to_mf_fatigue) > 0:
+                    w.writerow([f'# MF fatigue onset: {result.time_to_mf_fatigue[0] - base_time:.3f} s'])
+                else:
+                    w.writerow(['# MF fatigue onset: Not detected'])
+                w.writerow(['time_s', 'rms_value', 'median_freq_hz'])
+                for t, r, m in zip(result.rms_times, result.rms_values, result.mf_values):
+                    w.writerow([round(float(t) - base_time, 6),
+                                round(float(r), 8),
+                                round(float(m), 4)])
+                w.writerow([])
 
     def closeEvent(self, event):
         """Handle window close event."""

@@ -26,4 +26,12 @@ class FeaturesPanel(QtWidgets.QWidget):
         self.fatigue_analysis_button = QtWidgets.QPushButton("Fatigue Analysis")
         layout.addWidget(self.fatigue_analysis_button)
 
+        separator = QtWidgets.QFrame()
+        separator.setFrameShape(QtWidgets.QFrame.HLine)
+        separator.setFrameShadow(QtWidgets.QFrame.Sunken)
+        layout.addWidget(separator)
+
+        self.export_button = QtWidgets.QPushButton("Export Results")
+        layout.addWidget(self.export_button)
+
         layout.addStretch()

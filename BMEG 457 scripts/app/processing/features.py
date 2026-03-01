@@ -669,3 +669,291 @@ def compute_fatigue(
         print(f"[Features] Fatigue computation failed: {e}")
         return None
 
+
+@dataclass
+class CentroidShiftResult:
+    """Results from HD-EMG activation centroid shift analysis."""
+    times: np.ndarray           # center timestamp of each window
+    centroid_x: np.ndarray      # column centroid over time (0–7)
+    centroid_y: np.ndarray      # row centroid over time (0–7)
+    displacement: np.ndarray    # Euclidean distance from initial centroid (electrode-units)
+    initial_centroid: tuple     # (cx0, cy0) — centroid at start of recording
+    total_shift: float          # displacement at the final window
+    mean_drift_rate: float      # total_shift / recording_duration (electrode-units/s)
+    sample_rate: float
+
+
+def compute_centroid_shift(
+    data_64ch: np.ndarray,
+    timestamps: np.ndarray,
+    sample_rate: float,
+    window_duration: float = 0.5,
+    step_duration: float = 0.1,
+) -> Optional[CentroidShiftResult]:
+    """Track the weighted activation centroid of the HD-EMG 8x8 grid over time.
+
+    For each sliding window, computes per-channel RMS and treats it as a spatial
+    weight on the 8x8 electrode grid. The centroid (column, row) is the
+    RMS-weighted center of the grid. Displacement measures how far the centroid
+    has shifted from its initial position, indicating fatigue-driven spatial
+    redistribution of motor unit recruitment.
+
+    Channel-to-grid mapping: channel_idx = col * 8 + (7 - row)
+    Bottom-left = channel 0, column-major order.
+
+    Parameters:
+        data_64ch: Multi-channel EMG data, shape (64, n_samples)
+        timestamps: 1D timestamp array (same length as n_samples)
+        sample_rate: Estimated sample rate in Hz (used as fallback)
+        window_duration: Sliding window size in seconds
+        step_duration: Sliding window step size in seconds
+
+    Returns:
+        CentroidShiftResult with centroid time series and displacement, or None on failure.
+    """
+    try:
+        if data_64ch.shape[0] != 64:
+            return None
+
+        ts = timestamps.copy()
+
+        # --- Timestamp preprocessing ---
+        # Remove samples where timestamp is NaN or any channel has NaN
+        nan_mask = np.isnan(ts) | np.any(np.isnan(data_64ch), axis=0)
+        ts = ts[~nan_mask]
+        data = data_64ch[:, ~nan_mask]
+
+        if len(ts) < 30:
+            return None
+
+        # Interpolate duplicated timestamps (same pattern as other compute functions)
+        unique, counts = np.unique(ts, return_counts=True)
+        if len(set(counts)) == 1 and counts[0] > 1:
+            n_repeats = counts[0]
+            new_ts = []
+            for i in range(len(unique) - 1):
+                interp = np.linspace(unique[i], unique[i + 1], n_repeats, endpoint=False)
+                new_ts.extend(interp)
+            last_interval = unique[-1] - unique[-2] if len(unique) > 1 else 1.0
+            last_group = np.linspace(unique[-1], unique[-1] + last_interval, n_repeats, endpoint=False)
+            new_ts.extend(last_group)
+            ts = np.array(new_ts)
+
+        # Enforce strictly increasing timestamps
+        inc_mask = np.diff(ts, prepend=ts[0]) > 0
+        ts = ts[inc_mask]
+        data = data[:, inc_mask]
+
+        if len(ts) < 30 or np.all(np.diff(ts) == 0):
+            return None
+
+        dt = np.diff(ts)
+        dt = dt[dt > 0]
+        if len(dt) == 0 or np.median(dt) == 0:
+            return None
+        fs = 1.0 / np.median(np.diff(ts))
+
+        window_size = int(window_duration * fs)
+        step_size = int(step_duration * fs)
+        if window_size < 2 or step_size < 1:
+            return None
+
+        # Precompute grid column/row for each channel index.
+        # channel_idx = col * 8 + (7 - row)  →  col = ch // 8, row = 7 - (ch % 8)
+        ch_cols = np.array([ch // 8 for ch in range(64)], dtype=float)
+        ch_rows = np.array([7 - (ch % 8) for ch in range(64)], dtype=float)
+
+        centroid_x_list = []
+        centroid_y_list = []
+        time_list = []
+
+        n_samples = data.shape[1]
+        for start in range(0, n_samples - window_size + 1, step_size):
+            end = start + window_size
+            window = data[:, start:end]
+
+            # Per-channel RMS as spatial weights
+            w = np.sqrt(np.mean(window ** 2, axis=1))  # shape (64,)
+            total_w = float(np.sum(w))
+            if total_w == 0:
+                continue
+
+            centroid_x_list.append(float(np.dot(ch_cols, w) / total_w))
+            centroid_y_list.append(float(np.dot(ch_rows, w) / total_w))
+            center_idx = min((start + end) // 2, len(ts) - 1)
+            time_list.append(ts[center_idx])
+
+        if len(centroid_x_list) == 0:
+            return None
+
+        centroid_x = np.array(centroid_x_list)
+        centroid_y = np.array(centroid_y_list)
+        times = np.array(time_list)
+
+        cx0, cy0 = centroid_x[0], centroid_y[0]
+        displacement = np.sqrt((centroid_x - cx0) ** 2 + (centroid_y - cy0) ** 2)
+
+        recording_duration = float(ts[-1] - ts[0])
+        total_shift = float(displacement[-1])
+        mean_drift_rate = total_shift / recording_duration if recording_duration > 0 else 0.0
+        output_rate = 1.0 / np.mean(np.diff(times)) if len(times) > 1 else 1.0 / step_duration
+
+        return CentroidShiftResult(
+            times=times,
+            centroid_x=centroid_x,
+            centroid_y=centroid_y,
+            displacement=displacement,
+            initial_centroid=(cx0, cy0),
+            total_shift=total_shift,
+            mean_drift_rate=mean_drift_rate,
+            sample_rate=output_rate,
+        )
+
+    except Exception as e:
+        print(f"[Features] Centroid shift computation failed: {e}")
+        return None
+
+
+@dataclass
+class SpatialNonUniformityResult:
+    """Results from HD-EMG spatial non-uniformity and activation area analysis."""
+    times: np.ndarray               # center timestamp of each window
+    cv: np.ndarray                  # coefficient of variation per window (std/mean of channel RMS)
+    entropy: np.ndarray             # Shannon spatial entropy per window (bits; max=6 for 64 channels)
+    activation_fraction: np.ndarray # fraction of channels active per window (0–1)
+    threshold_source: str           # 'calibration' | 'auto'
+    sample_rate: float
+
+
+def compute_spatial_nonuniformity(
+    data_64ch: np.ndarray,
+    timestamps: np.ndarray,
+    sample_rate: float,
+    threshold_per_channel: Optional[np.ndarray] = None,
+    window_duration: float = 0.5,
+    step_duration: float = 0.1,
+) -> Optional[SpatialNonUniformityResult]:
+    """Track spatial activation non-uniformity and active area of the HD-EMG 8x8 grid over time.
+
+    For each sliding window, computes three spatial metrics from per-channel RMS:
+    - Coefficient of Variation (CV): std/mean of the 64-channel RMS distribution.
+      Higher CV = more spatially uneven activation.
+    - Shannon spatial entropy: -sum(p * log2(p)) where p = normalized per-channel RMS.
+      Higher entropy = more uniform distribution (max 6 bits for 64 channels).
+    - Activation fraction: fraction of channels whose RMS exceeds a threshold.
+      Uses calibration thresholds if provided, otherwise falls back to window mean.
+
+    Parameters:
+        data_64ch: Multi-channel EMG data, shape (64, n_samples)
+        timestamps: 1D timestamp array (same length as n_samples)
+        sample_rate: Estimated sample rate in Hz (used as fallback)
+        threshold_per_channel: Per-channel RMS thresholds from calibration, shape (64,).
+            If None, uses per-window mean as the active/inactive threshold.
+        window_duration: Sliding window size in seconds
+        step_duration: Sliding window step size in seconds
+
+    Returns:
+        SpatialNonUniformityResult with CV, entropy, and activation fraction time series,
+        or None on failure.
+    """
+    try:
+        if data_64ch.shape[0] != 64:
+            return None
+
+        ts = timestamps.copy()
+
+        # --- Timestamp preprocessing (same pattern as other compute functions) ---
+        nan_mask = np.isnan(ts) | np.any(np.isnan(data_64ch), axis=0)
+        ts = ts[~nan_mask]
+        data = data_64ch[:, ~nan_mask]
+
+        if len(ts) < 30:
+            return None
+
+        unique, counts = np.unique(ts, return_counts=True)
+        if len(set(counts)) == 1 and counts[0] > 1:
+            n_repeats = counts[0]
+            new_ts = []
+            for i in range(len(unique) - 1):
+                interp = np.linspace(unique[i], unique[i + 1], n_repeats, endpoint=False)
+                new_ts.extend(interp)
+            last_interval = unique[-1] - unique[-2] if len(unique) > 1 else 1.0
+            last_group = np.linspace(unique[-1], unique[-1] + last_interval, n_repeats, endpoint=False)
+            new_ts.extend(last_group)
+            ts = np.array(new_ts)
+
+        inc_mask = np.diff(ts, prepend=ts[0]) > 0
+        ts = ts[inc_mask]
+        data = data[:, inc_mask]
+
+        if len(ts) < 30 or np.all(np.diff(ts) == 0):
+            return None
+
+        dt = np.diff(ts)
+        dt = dt[dt > 0]
+        if len(dt) == 0 or np.median(dt) == 0:
+            return None
+        fs = 1.0 / np.median(np.diff(ts))
+
+        window_size = int(window_duration * fs)
+        step_size = int(step_duration * fs)
+        if window_size < 2 or step_size < 1:
+            return None
+
+        threshold_source = 'calibration' if threshold_per_channel is not None else 'auto'
+        eps = 1e-12  # small constant to avoid log(0)
+
+        cv_list = []
+        entropy_list = []
+        activation_list = []
+        time_list = []
+
+        n_samples = data.shape[1]
+        for start in range(0, n_samples - window_size + 1, step_size):
+            end = start + window_size
+            window = data[:, start:end]
+
+            # Per-channel RMS
+            w = np.sqrt(np.mean(window ** 2, axis=1))  # shape (64,)
+            total_w = float(np.sum(w))
+            if total_w == 0:
+                continue
+
+            # Coefficient of variation
+            mean_w = float(np.mean(w))
+            cv = float(np.std(w) / mean_w) if mean_w > 0 else 0.0
+
+            # Shannon spatial entropy (bits)
+            p = w / total_w
+            entropy = float(-np.sum(p * np.log2(p + eps)))
+
+            # Activation area
+            if threshold_per_channel is not None:
+                active = float(np.sum(w > threshold_per_channel)) / 64.0
+            else:
+                active = float(np.sum(w > mean_w)) / 64.0
+
+            cv_list.append(cv)
+            entropy_list.append(entropy)
+            activation_list.append(active)
+            center_idx = min((start + end) // 2, len(ts) - 1)
+            time_list.append(ts[center_idx])
+
+        if len(cv_list) == 0:
+            return None
+
+        times = np.array(time_list)
+        output_rate = 1.0 / np.mean(np.diff(times)) if len(times) > 1 else 1.0 / step_duration
+
+        return SpatialNonUniformityResult(
+            times=times,
+            cv=np.array(cv_list),
+            entropy=np.array(entropy_list),
+            activation_fraction=np.array(activation_list),
+            threshold_source=threshold_source,
+            sample_rate=output_rate,
+        )
+
+    except Exception as e:
+        print(f"[Features] Spatial non-uniformity computation failed: {e}")
+        return None

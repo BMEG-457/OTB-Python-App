@@ -4,9 +4,10 @@ from PyQt5 import QtWidgets, QtCore, QtGui
 import pyqtgraph as pg
 import csv
 import os
+import numpy as np
 from datetime import datetime
 
-from app.core.paths import get_recordings_dir
+from app.core.paths import get_recordings_dir, get_data_dir
 from app.data.csv_loader import CSVDataLoader
 from app.managers.analysis_track_manager import AnalysisTrackManager
 from app.managers.time_navigation_controller import TimeNavigationController
@@ -17,6 +18,8 @@ from app.processing.features import (
     compute_burst_duration,
     compute_bilateral_symmetry,
     compute_fatigue,
+    compute_centroid_shift,
+    compute_spatial_nonuniformity,
 )
 
 
@@ -251,6 +254,8 @@ class DataAnalysisWindow(QtWidgets.QWidget):
         self.features_panel.burst_duration_button.clicked.connect(self._on_burst_duration)
         self.features_panel.bilateral_symmetry_button.clicked.connect(self._on_bilateral_symmetry)
         self.features_panel.fatigue_analysis_button.clicked.connect(self._on_fatigue_analysis)
+        self.features_panel.centroid_shift_button.clicked.connect(self._on_centroid_shift)
+        self.features_panel.spatial_nonuniformity_button.clicked.connect(self._on_spatial_nonuniformity)
         self.features_panel.export_button.clicked.connect(self._on_export_results)
 
     def open_file_dialog(self):
@@ -839,6 +844,184 @@ class DataAnalysisWindow(QtWidgets.QWidget):
 
         self._update_view()
 
+    def _on_centroid_shift(self):
+        """Compute HD-EMG activation centroid shift on all 64 channels and add feature tracks."""
+        if self.csv_loader is None or not self.csv_loader.is_loaded():
+            QtWidgets.QMessageBox.warning(self, "No Data", "Please load a CSV file first.")
+            return
+
+        if self.track_manager is None:
+            QtWidgets.QMessageBox.warning(self, "No Data", "Please load a CSV file first.")
+            return
+
+        if self.csv_loader.data.shape[0] != 64:
+            QtWidgets.QMessageBox.warning(
+                self, "Incompatible Data",
+                f"Centroid Shift requires exactly 64 channels (HD-EMG 8x8 grid).\n"
+                f"This file has {self.csv_loader.data.shape[0]} channel(s)."
+            )
+            return
+
+        self.track_manager.remove_feature_tracks()
+        self.feature_results_text.clear()
+
+        self._last_feature_results = []
+        self._last_feature_type = 'centroid'
+        self._last_bilateral_meta = {}
+
+        result = compute_centroid_shift(
+            data_64ch=self.csv_loader.data,
+            timestamps=self.csv_loader.timestamps,
+            sample_rate=self.csv_loader.sample_rate,
+        )
+
+        if result is None:
+            QtWidgets.QMessageBox.warning(
+                self, "Computation Failed",
+                "Centroid shift computation failed.\n"
+                "The recording may be too short or contain invalid data."
+            )
+            return
+
+        self._last_feature_results = [(0, result)]
+
+        base_time = self.csv_loader.timestamps[0]
+        rel_times = result.times - base_time
+
+        # Add three feature tracks using relative timestamps
+        self.track_manager.add_feature_track(
+            title="Centroid X (column)",
+            timestamps=rel_times,
+            data_1d=result.centroid_x,
+            sample_rate=result.sample_rate,
+        )
+        self.track_manager.add_feature_track(
+            title="Centroid Y (row)",
+            timestamps=rel_times,
+            data_1d=result.centroid_y,
+            sample_rate=result.sample_rate,
+        )
+        self.track_manager.add_feature_track(
+            title="Centroid Displacement (electrode-units)",
+            timestamps=rel_times,
+            data_1d=result.displacement,
+            sample_rate=result.sample_rate,
+        )
+
+        cx0, cy0 = result.initial_centroid
+        cx_final = float(result.centroid_x[-1])
+        cy_final = float(result.centroid_y[-1])
+        duration = float(result.times[-1] - result.times[0])
+
+        lines = [
+            "=== Centroid Shift Analysis (HD-EMG 8x8) ===",
+            f"  Initial centroid:    col={cx0:.2f}, row={cy0:.2f}",
+            f"  Final centroid:      col={cx_final:.2f}, row={cy_final:.2f}",
+            f"  Total displacement:  {result.total_shift:.3f} electrode-units",
+            f"  Mean drift rate:     {result.mean_drift_rate:.4f} electrode-units/s",
+            f"  Duration analyzed:   {duration:.2f} s",
+        ]
+        self.feature_results_text.setText("\n".join(lines))
+        self._update_view()
+
+    def _on_spatial_nonuniformity(self):
+        """Compute spatial non-uniformity and activation area on all 64 channels."""
+        if self.csv_loader is None or not self.csv_loader.is_loaded():
+            QtWidgets.QMessageBox.warning(self, "No Data", "Please load a CSV file first.")
+            return
+
+        if self.track_manager is None:
+            QtWidgets.QMessageBox.warning(self, "No Data", "Please load a CSV file first.")
+            return
+
+        if self.csv_loader.data.shape[0] != 64:
+            QtWidgets.QMessageBox.warning(
+                self, "Incompatible Data",
+                f"Spatial Non-Uniformity requires exactly 64 channels (HD-EMG 8x8 grid).\n"
+                f"This file has {self.csv_loader.data.shape[0]} channel(s)."
+            )
+            return
+
+        # Attempt to load per-channel calibration thresholds from previous session
+        threshold_per_channel = None
+        session_path = os.path.join(get_data_dir(), 'previous_session.csv')
+        if os.path.exists(session_path):
+            try:
+                with open(session_path, 'r', newline='') as f:
+                    row = next(csv.DictReader(f), None)
+                    if row and row.get('is_calibrated', '').lower() == 'true':
+                        vals = row.get('threshold_values', '')
+                        if vals:
+                            arr = [float(x) for x in vals.split(',') if x.strip()]
+                            if len(arr) == 64:
+                                threshold_per_channel = np.array(arr)
+            except Exception:
+                pass  # Fall through to auto-threshold
+
+        self.track_manager.remove_feature_tracks()
+        self.feature_results_text.clear()
+
+        self._last_feature_results = []
+        self._last_feature_type = 'spatial'
+        self._last_bilateral_meta = {}
+
+        result = compute_spatial_nonuniformity(
+            data_64ch=self.csv_loader.data,
+            timestamps=self.csv_loader.timestamps,
+            sample_rate=self.csv_loader.sample_rate,
+            threshold_per_channel=threshold_per_channel,
+        )
+
+        if result is None:
+            QtWidgets.QMessageBox.warning(
+                self, "Computation Failed",
+                "Spatial non-uniformity computation failed.\n"
+                "The recording may be too short or contain invalid data."
+            )
+            return
+
+        self._last_feature_results = [(0, result)]
+
+        base_time = self.csv_loader.timestamps[0]
+        rel_times = result.times - base_time
+
+        self.track_manager.add_feature_track(
+            title="Spatial CV",
+            timestamps=rel_times,
+            data_1d=result.cv,
+            sample_rate=result.sample_rate,
+        )
+        self.track_manager.add_feature_track(
+            title="Spatial Entropy (bits)",
+            timestamps=rel_times,
+            data_1d=result.entropy,
+            sample_rate=result.sample_rate,
+        )
+        self.track_manager.add_feature_track(
+            title="Activation Area (fraction)",
+            timestamps=rel_times,
+            data_1d=result.activation_fraction,
+            sample_rate=result.sample_rate,
+        )
+
+        mean_cv = float(result.cv.mean())
+        mean_entropy = float(result.entropy.mean())
+        mean_area = float(result.activation_fraction.mean()) * 100.0
+        peak_area = float(result.activation_fraction.max()) * 100.0
+        peak_idx = int(result.activation_fraction.argmax())
+        peak_time = float(rel_times[peak_idx])
+
+        lines = [
+            "=== Spatial Non-Uniformity Analysis (HD-EMG 8x8) ===",
+            f"  Threshold source:      {result.threshold_source}",
+            f"  Mean CV:               {mean_cv:.4f}  (higher = more uneven)",
+            f"  Mean entropy:          {mean_entropy:.2f} bits  (max 6.00 = fully uniform)",
+            f"  Mean activation area:  {mean_area:.1f}% of 64 channels",
+            f"  Peak activation area:  {peak_area:.1f}% at {peak_time:.2f}s",
+        ]
+        self.feature_results_text.setText("\n".join(lines))
+        self._update_view()
+
     def _apply_window_duration(self):
         """Apply the window duration from input field."""
         try:
@@ -1035,6 +1218,36 @@ class DataAnalysisWindow(QtWidgets.QWidget):
                                 round(float(r), 8),
                                 round(float(m), 4)])
                 w.writerow([])
+
+        elif self._last_feature_type == 'spatial':
+            _, result = self._last_feature_results[0]
+            w.writerow(['## SPATIAL NON-UNIFORMITY (HD-EMG 8x8)'])
+            w.writerow([f'# Threshold source: {result.threshold_source}'])
+            w.writerow([f'# Mean CV: {float(result.cv.mean()):.6f}'])
+            w.writerow([f'# Mean entropy (bits): {float(result.entropy.mean()):.6f}'])
+            w.writerow([f'# Mean activation fraction: {float(result.activation_fraction.mean()):.6f}'])
+            w.writerow(['time_s', 'cv', 'entropy_bits', 'activation_fraction'])
+            for t, c, e, a in zip(result.times, result.cv, result.entropy, result.activation_fraction):
+                w.writerow([round(float(t) - base_time, 6),
+                            round(float(c), 6),
+                            round(float(e), 6),
+                            round(float(a), 6)])
+            w.writerow([])
+
+        elif self._last_feature_type == 'centroid':
+            _, result = self._last_feature_results[0]
+            cx0, cy0 = result.initial_centroid
+            w.writerow(['## CENTROID SHIFT ANALYSIS (HD-EMG 8x8)'])
+            w.writerow([f'# Initial centroid: col={cx0:.4f}, row={cy0:.4f}'])
+            w.writerow([f'# Total displacement: {result.total_shift:.6f} electrode-units'])
+            w.writerow([f'# Mean drift rate: {result.mean_drift_rate:.6f} electrode-units/s'])
+            w.writerow(['time_s', 'centroid_col', 'centroid_row', 'displacement_electrode_units'])
+            for t, cx, cy, d in zip(result.times, result.centroid_x, result.centroid_y, result.displacement):
+                w.writerow([round(float(t) - base_time, 6),
+                            round(float(cx), 6),
+                            round(float(cy), 6),
+                            round(float(d), 6)])
+            w.writerow([])
 
     def closeEvent(self, event):
         """Handle window close event."""

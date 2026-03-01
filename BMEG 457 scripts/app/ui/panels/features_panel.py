@@ -26,6 +26,12 @@ class FeaturesPanel(QtWidgets.QWidget):
         self.fatigue_analysis_button = QtWidgets.QPushButton("Fatigue Analysis")
         layout.addWidget(self.fatigue_analysis_button)
 
+        self.centroid_shift_button = QtWidgets.QPushButton("Centroid Shift")
+        layout.addWidget(self.centroid_shift_button)
+
+        self.spatial_nonuniformity_button = QtWidgets.QPushButton("Spatial Non-Uniformity")
+        layout.addWidget(self.spatial_nonuniformity_button)
+
         separator = QtWidgets.QFrame()
         separator.setFrameShape(QtWidgets.QFrame.HLine)
         separator.setFrameShadow(QtWidgets.QFrame.Sunken)

@@ -18,15 +18,16 @@ source.include_patterns = assets/*
 requirements = python3,kivy==2.3.0,numpy
 
 # Android permissions
-# MANAGE_EXTERNAL_STORAGE: allows read/write anywhere on the filesystem (API 30+).
-# Required to save/load recordings from /sdcard/Documents/OTB_EMG/ so files are
-# visible in any file manager and transferable via USB.
-# After install, grant this manually: Settings → Apps → OTB EMG App → Permissions →
-# Files and media → Allow management of all files.
-android.permissions = INTERNET,MANAGE_EXTERNAL_STORAGE
+# WRITE/READ_EXTERNAL_STORAGE: required on Android 9/10 (API 28-29) to write to
+# /sdcard/Documents/OTB_EMG/ so recordings are visible in the file manager.
+# These are standard runtime permissions shown as a system dialog on first launch.
+android.permissions = INTERNET, WRITE_EXTERNAL_STORAGE, READ_EXTERNAL_STORAGE
 
 # Android API targets
-android.api = 33
+# targetSdkVersion=28: apps targeting API 28 or lower receive legacy storage
+# behaviour on Android 10 automatically — requestLegacyExternalStorage is not
+# needed and buildozer's manifest attribute injection is avoided entirely.
+android.api = 28
 android.minapi = 21
 
 # Build for both 64-bit and 32-bit ARM devices

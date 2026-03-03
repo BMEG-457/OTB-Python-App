@@ -33,7 +33,7 @@ class EMGPlotWidget(Widget):
         self._draw()
 
     def update(self, data):
-        """Roll new samples into buffer and redraw.
+        """Roll new samples into buffer. Does not redraw — call render() separately.
 
         Args:
             data: np.ndarray of shape (channels, samples).
@@ -50,6 +50,8 @@ class EMGPlotWidget(Widget):
             self._buffer = np.roll(self._buffer, -n)
             self._buffer[-n:] = new_samples
 
+    def render(self):
+        """Redraw the canvas from the current buffer. Call from the 60fps tick."""
         self._draw()
 
     def _draw(self):

@@ -6,6 +6,7 @@ from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.label import Label
 from kivy.uix.progressbar import ProgressBar
 from kivy.clock import Clock
+from kivy.metrics import sp
 from app.core import config as CFG
 
 
@@ -41,10 +42,10 @@ class CalibrationPopup(Popup):
         # Build content
         layout = BoxLayout(orientation='vertical', padding=16, spacing=12)
         self.status_label = Label(
-            text='Preparing...', font_size=18, size_hint=(1, 0.3), halign='center'
+            text='Preparing...', font_size=sp(20), size_hint=(1, 0.3), halign='center'
         )
         self.instruction_label = Label(
-            text='', font_size=14, color=(0.8, 0.8, 0.8, 1), size_hint=(1, 0.3), halign='center'
+            text='', font_size=sp(16), color=(0.8, 0.8, 0.8, 1), size_hint=(1, 0.3), halign='center'
         )
         self.progress = ProgressBar(max=100, value=0, size_hint=(1, 0.2))
         layout.add_widget(self.status_label)

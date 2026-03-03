@@ -2,6 +2,7 @@ from kivy.uix.screenmanager import Screen
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
 from kivy.uix.label import Label
+from kivy.metrics import sp
 
 
 class SelectionScreen(Screen):
@@ -14,20 +15,20 @@ class SelectionScreen(Screen):
 
         layout.add_widget(Label(
             text='OTB EMG',
-            font_size=40,
+            font_size=sp(36),
             bold=True,
             size_hint=(1, 0.25),
         ))
         layout.add_widget(Label(
             text='Select a mode to continue',
-            font_size=18,
+            font_size=sp(18),
             color=(0.7, 0.7, 0.7, 1),
             size_hint=(1, 0.15),
         ))
 
         btn_live = Button(
             text='Live Data Viewing',
-            font_size=22,
+            font_size=sp(20),
             size_hint=(1, 0.25),
             background_color=(0.1, 0.6, 0.4, 1),
         )
@@ -36,7 +37,7 @@ class SelectionScreen(Screen):
 
         btn_analysis = Button(
             text='Data Analysis',
-            font_size=22,
+            font_size=sp(20),
             size_hint=(1, 0.25),
             background_color=(0.2, 0.4, 0.7, 1),
         )

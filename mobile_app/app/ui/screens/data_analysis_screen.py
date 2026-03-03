@@ -10,9 +10,9 @@ from kivy.uix.gridlayout import GridLayout
 from kivy.uix.scrollview import ScrollView
 from kivy.uix.button import Button
 from kivy.uix.label import Label
-from kivy.uix.filechooser import FileChooserListView
 from kivy.uix.popup import Popup
 from kivy.clock import Clock
+from kivy.metrics import sp
 
 from app.processing.features import (
     compute_tkeo_activation_timing,
@@ -89,23 +89,23 @@ class DataAnalysisScreen(Screen):
 
         # Top bar
         top_bar = BoxLayout(orientation='horizontal', size_hint=(1, 0.08), padding=4, spacing=4)
-        btn_back = Button(text='Back', size_hint=(0.1, 1))
+        btn_back = Button(text='Back', size_hint=(0.1, 1), font_size=sp(16))
         btn_back.bind(on_press=lambda x: setattr(self.manager, 'current', 'selection'))
         top_bar.add_widget(btn_back)
-        top_bar.add_widget(Label(text='Data Analysis', font_size=20, bold=True, size_hint=(0.6, 1)))
+        top_bar.add_widget(Label(text='Data Analysis', font_size=sp(22), bold=True, size_hint=(0.6, 1)))
         root.add_widget(top_bar)
 
         # File load bar
         file_bar = BoxLayout(orientation='horizontal', size_hint=(1, 0.08), padding=4, spacing=4)
 
-        self.file1_label = Label(text='No file loaded', size_hint=(0.35, 1), font_size=12,
+        self.file1_label = Label(text='No file loaded', size_hint=(0.35, 1), font_size=sp(14),
                                  color=(0.7, 0.7, 0.7, 1))
-        btn_load1 = Button(text='Load File 1', size_hint=(0.15, 1))
+        btn_load1 = Button(text='Load File 1', size_hint=(0.15, 1), font_size=sp(15))
         btn_load1.bind(on_press=lambda x: self._show_file_chooser(1))
 
         self.file2_label = Label(text='No file 2 (for bilateral symmetry)',
-                                 size_hint=(0.35, 1), font_size=12, color=(0.7, 0.7, 0.7, 1))
-        btn_load2 = Button(text='Load File 2', size_hint=(0.15, 1))
+                                 size_hint=(0.35, 1), font_size=sp(14), color=(0.7, 0.7, 0.7, 1))
+        btn_load2 = Button(text='Load File 2', size_hint=(0.15, 1), font_size=sp(15))
         btn_load2.bind(on_press=lambda x: self._show_file_chooser(2))
 
         file_bar.add_widget(btn_load1)
@@ -125,7 +125,7 @@ class DataAnalysisScreen(Screen):
             ('Spatial Uniformity', self._run_spatial),
         ]
         for label, handler in analyses:
-            btn = Button(text=label, font_size=13)
+            btn = Button(text=label, font_size=sp(15))
             btn.bind(on_press=handler)
             btn_grid.add_widget(btn)
         root.add_widget(btn_grid)
@@ -134,7 +134,7 @@ class DataAnalysisScreen(Screen):
         scroll = ScrollView(size_hint=(1, 0.72))
         self.results_label = Label(
             text='Load a recording file and run an analysis.',
-            font_size=13,
+            font_size=sp(15),
             halign='left',
             valign='top',
             size_hint_y=None,
@@ -153,35 +153,60 @@ class DataAnalysisScreen(Screen):
     # ------------------------------------------------------------------
 
     def _show_file_chooser(self, slot):
-        """Open a file chooser popup for the given slot (1 or 2)."""
+        """Open a popup listing CSV files from the recordings directory."""
         from app.core.paths import get_recordings_dir
         import os
 
-        start_path = get_recordings_dir() if os.path.isdir(get_recordings_dir()) else '/'
+        rec_dir = get_recordings_dir()
+        try:
+            all_files = [
+                f for f in os.listdir(rec_dir) if f.lower().endswith('.csv')
+            ] if os.path.isdir(rec_dir) else []
+            # Sort newest first by modification time
+            all_files.sort(
+                key=lambda f: os.path.getmtime(os.path.join(rec_dir, f)),
+                reverse=True,
+            )
+        except Exception:
+            all_files = []
 
-        content = BoxLayout(orientation='vertical')
-        chooser = FileChooserListView(
-            path=start_path,
-            filters=['*.csv'],
-            size_hint=(1, 0.85),
-        )
-        btn_bar = BoxLayout(size_hint=(1, 0.15), spacing=8)
-        btn_select = Button(text='Select')
-        btn_cancel = Button(text='Cancel')
-        btn_bar.add_widget(btn_select)
-        btn_bar.add_widget(btn_cancel)
-        content.add_widget(chooser)
-        content.add_widget(btn_bar)
+        content = BoxLayout(orientation='vertical', spacing=4, padding=4)
+
+        scroll = ScrollView(size_hint=(1, 0.88))
+        file_list = BoxLayout(orientation='vertical', size_hint_y=None, spacing=2)
+        file_list.bind(minimum_height=file_list.setter('height'))
 
         popup = Popup(title=f'Select File {slot}', content=content, size_hint=(0.9, 0.85))
 
-        def on_select(inst):
-            if chooser.selection:
-                self._load_file(slot, chooser.selection[0])
-            popup.dismiss()
+        if not all_files:
+            file_list.add_widget(Label(
+                text='No recordings found.\nRecord a session first.',
+                font_size=sp(15),
+                halign='center',
+                size_hint_y=None,
+                height=sp(60),
+            ))
+        else:
+            for fname in all_files:
+                fpath = os.path.join(rec_dir, fname)
+                btn = Button(
+                    text=fname,
+                    font_size=sp(14),
+                    size_hint_y=None,
+                    height=sp(44),
+                    halign='left',
+                    text_size=(None, None),
+                )
+                btn.bind(on_press=lambda inst, p=fpath: (self._load_file(slot, p), popup.dismiss()))
+                file_list.add_widget(btn)
 
-        btn_select.bind(on_press=on_select)
+        scroll.add_widget(file_list)
+        content.add_widget(scroll)
+
+        btn_cancel = Button(text='Cancel', font_size=sp(16), size_hint=(1, 0.12))
         btn_cancel.bind(on_press=lambda x: popup.dismiss())
+        content.add_widget(btn_cancel)
+
         popup.open()
 
     def _load_file(self, slot, path):

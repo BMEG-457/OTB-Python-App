@@ -153,60 +153,155 @@ class DataAnalysisScreen(Screen):
     # ------------------------------------------------------------------
 
     def _show_file_chooser(self, slot):
-        """Open a popup listing CSV files from the recordings directory."""
-        from app.core.paths import get_recordings_dir
+        """Navigable file browser popup starting at /sdcard/Documents.
+
+        Shows subdirectories and CSV files.  Tap a directory to enter it;
+        tap a CSV to select it.  A '[..] Up' row returns to the parent.
+        """
         import os
 
-        rec_dir = get_recordings_dir()
+        # Test actual readability — os.path.isdir can succeed even when
+        # os.listdir is denied (different syscalls, different permission checks).
+        # user_data_dir (private internal storage) is always accessible and is
+        # where recordings fall back to if external storage permission is not
+        # yet in effect (requires app restart after grant).
+        package = 'org.bmeg457.otbemgapp'
+
+        # Try Android API first — may succeed where direct POSIX access is blocked.
+        _jnius_ext = None
         try:
-            all_files = [
-                f for f in os.listdir(rec_dir) if f.lower().endswith('.csv')
-            ] if os.path.isdir(rec_dir) else []
-            # Sort newest first by modification time
-            all_files.sort(
-                key=lambda f: os.path.getmtime(os.path.join(rec_dir, f)),
-                reverse=True,
-            )
+            from jnius import autoclass as _ac
+            _ext = _ac('org.kivy.android.PythonActivity').mActivity.getExternalFilesDir(None)
+            if _ext is not None:
+                _jnius_ext = _ext.getAbsolutePath()
         except Exception:
-            all_files = []
+            pass
+
+        try:
+            from kivy.app import App as _App
+            _udd = _App.get_running_app().user_data_dir
+        except Exception:
+            _udd = None
+
+        start_dir = None
+        for candidate in filter(None, (
+            _jnius_ext,
+            f'/storage/emulated/0/Android/data/{package}/files',
+            '/storage/emulated/0/Documents',
+            '/sdcard/Documents',
+            '/storage/emulated/0',
+            '/sdcard',
+            _udd,
+        )):
+            try:
+                os.listdir(candidate)
+                start_dir = candidate
+                break
+            except Exception:
+                continue
 
         content = BoxLayout(orientation='vertical', spacing=4, padding=4)
 
-        scroll = ScrollView(size_hint=(1, 0.88))
+        if start_dir is None:
+            # No accessible path found — storage permission not yet in effect.
+            # User must close and reopen the app after granting permission.
+            content = BoxLayout(orientation='vertical', padding=16, spacing=12)
+            content.add_widget(Label(
+                text=(
+                    'Storage not accessible.\n\n'
+                    'If you just granted the storage permission,\n'
+                    'close and reopen the app for it to take effect.\n\n'
+                    'Recordings are saved to:\n'
+                    'Android > data > org.bmeg457.otbemgapp\n'
+                    '> files > OTB_EMG > recordings'
+                ),
+                font_size=sp(15), halign='center', valign='middle',
+                size_hint=(1, 0.88),
+            ))
+            btn_cancel2 = Button(text='OK', font_size=sp(16), size_hint=(1, 0.12))
+            popup2 = Popup(
+                title='Storage unavailable', content=content,
+                size_hint=(0.85, 0.55),
+            )
+            btn_cancel2.bind(on_press=lambda x: popup2.dismiss())
+            content.add_widget(btn_cancel2)
+            popup2.open()
+            return
+
+        path_label = Label(
+            text=start_dir, font_size=sp(12), size_hint=(1, None), height=sp(28),
+            halign='left', color=(0.5, 0.75, 1, 1),
+        )
+        path_label.bind(size=lambda inst, _: setattr(inst, 'text_size', (inst.width, None)))
+        content.add_widget(path_label)
+
+        scroll = ScrollView(size_hint=(1, 0.82))
         file_list = BoxLayout(orientation='vertical', size_hint_y=None, spacing=2)
         file_list.bind(minimum_height=file_list.setter('height'))
-
-        popup = Popup(title=f'Select File {slot}', content=content, size_hint=(0.9, 0.85))
-
-        if not all_files:
-            file_list.add_widget(Label(
-                text='No recordings found.\nRecord a session first.',
-                font_size=sp(15),
-                halign='center',
-                size_hint_y=None,
-                height=sp(60),
-            ))
-        else:
-            for fname in all_files:
-                fpath = os.path.join(rec_dir, fname)
-                btn = Button(
-                    text=fname,
-                    font_size=sp(14),
-                    size_hint_y=None,
-                    height=sp(44),
-                    halign='left',
-                    text_size=(None, None),
-                )
-                btn.bind(on_press=lambda inst, p=fpath: (self._load_file(slot, p), popup.dismiss()))
-                file_list.add_widget(btn)
-
         scroll.add_widget(file_list)
         content.add_widget(scroll)
 
-        btn_cancel = Button(text='Cancel', font_size=sp(16), size_hint=(1, 0.12))
-        btn_cancel.bind(on_press=lambda x: popup.dismiss())
+        btn_cancel = Button(text='Cancel', font_size=sp(16), size_hint=(1, 0.1))
         content.add_widget(btn_cancel)
 
+        popup = Popup(title=f'Select File {slot}', content=content, size_hint=(0.92, 0.92))
+        btn_cancel.bind(on_press=lambda x: popup.dismiss())
+
+        def populate(directory):
+            file_list.clear_widgets()
+            path_label.text = directory
+
+            # Up-one-level row
+            parent = os.path.dirname(directory)
+            if parent and parent != directory:
+                up_btn = Button(
+                    text='[..] Up', font_size=sp(15),
+                    size_hint_y=None, height=sp(48),
+                    background_color=(0.25, 0.30, 0.45, 1),
+                )
+                up_btn.bind(on_press=lambda x, p=parent: populate(p))
+                file_list.add_widget(up_btn)
+
+            try:
+                entries = sorted(os.listdir(directory))
+            except Exception as e:
+                file_list.add_widget(Label(
+                    text=f'Cannot read folder:\n{e}',
+                    font_size=sp(14), size_hint_y=None, height=sp(60),
+                ))
+                return
+
+            dirs = [e for e in entries if os.path.isdir(os.path.join(directory, e))
+                    and not e.startswith('.')]
+            csvs = [e for e in entries if e.lower().endswith('.csv')]
+
+            for d in dirs:
+                dpath = os.path.join(directory, d)
+                btn = Button(
+                    text=f'[{d}/]', font_size=sp(15),
+                    size_hint_y=None, height=sp(48),
+                    background_color=(0.22, 0.32, 0.50, 1),
+                )
+                btn.bind(on_press=lambda x, p=dpath: populate(p))
+                file_list.add_widget(btn)
+
+            for fname in csvs:
+                fpath = os.path.join(directory, fname)
+                btn = Button(
+                    text=fname, font_size=sp(14),
+                    size_hint_y=None, height=sp(48),
+                )
+                btn.bind(on_press=lambda x, p=fpath: (self._load_file(slot, p), popup.dismiss()))
+                file_list.add_widget(btn)
+
+            if not dirs and not csvs:
+                file_list.add_widget(Label(
+                    text='No folders or CSV files here.',
+                    font_size=sp(14), size_hint_y=None, height=sp(48),
+                    halign='center',
+                ))
+
+        populate(start_dir)
         popup.open()
 
     def _load_file(self, slot, path):

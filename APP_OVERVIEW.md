@@ -54,7 +54,7 @@ The Sessantaquattro+ (Italian: "sixty-four plus") is an OTB Bioelettronica wirel
 | Port | 45454 | Hard-coded in device firmware |
 | Byte order | Big-endian | Each sample = 2 bytes |
 
-The device connects to the laptop's WiFi, and the **laptop acts as the TCP server**. The device connects to it, not the other way around. This is why `SessantaquattroPlus.start_server()` binds to `0.0.0.0:45454` and waits for an incoming connection.
+The **laptop connects to the device's WiFi hotspot**, and the **laptop acts as the TCP server**. The device connects to it as a TCP client, not the other way around. This is why `SessantaquattroPlus.start_server()` binds to `0.0.0.0:45454` and waits for an incoming connection.
 
 ---
 
@@ -134,7 +134,7 @@ main()
 ### Connection Sequence
 
 1. Laptop opens TCP server on `0.0.0.0:45454` (listens for incoming connection)
-2. User powers on device and connects it to the laptop's WiFi hotspot
+2. User powers on device, then connects the laptop to the device's WiFi hotspot
 3. Device connects to laptop as TCP client
 4. Laptop sends a 2-byte configuration command
 5. Device immediately begins streaming data
@@ -155,13 +155,13 @@ Bits 11–12 : NCH   — channel count selector
 Bits 13–14 : FSAMP — sampling frequency selector
 ```
 
-Default command used by this app: `FSAMP=2` (2000 Hz), `NCH=3` (64 channels in monopolar mode), `MODE=0` (monopolar), `HPF=1` (hardware HPF at 10.5 Hz enabled), `GO=1`.
+Default command used by this app: `FSAMP=2` (2000 Hz), `NCH=3` (72 channels in monopolar mode — 64 EMG + 8 auxiliary), `MODE=0` (monopolar), `HPF=1` (hardware HPF at 10.5 Hz enabled), `GO=1`.
 
 ### Packet Format
 
 After the command is sent, the device streams continuously. Each packet contains one "tick" of data equal to `frequency / 16` samples per channel (at 2000 Hz: 125 samples per packet). Packet size in bytes: `nchannels × 2 × (frequency / 16)`.
 
-At 2000 Hz with 64 channels: `64 × 2 × 125 = 16000 bytes` per packet. The device transmits 16 packets per second.
+At 2000 Hz with 72 channels: `72 × 2 × 125 = 18000 bytes` per packet. The device transmits 16 packets per second.
 
 Data is packed as **big-endian 16-bit signed integers** in interleaved sample order: all channels for sample 0, all channels for sample 1, etc. After unpacking with `struct.unpack`, the array is reshaped to `(nchannels, n_samples)` — channels as rows, time as columns. This layout is used throughout the processing pipeline.
 
@@ -173,7 +173,7 @@ This describes the complete data path from hardware to screen:
 
 ```
 Device (WiFi)
-    │  TCP stream: 16000 bytes/packet at 16 packets/sec (2000 Hz, 64ch)
+    │  TCP stream: 18000 bytes/packet at 16 packets/sec (2000 Hz, 72ch)
     ▼
 DataReceiverThread  (background QThread, stays alive for entire session)
     │
@@ -197,8 +197,8 @@ DataReceiverThread  (background QThread, stays alive for entire session)
           track.feed(processed)  for each Track
 
 stage_output signal consumed by:
-    ├── RecordingManager.on_data_for_recording  (always, even when paused)
-    └── CalibrationDialog.on_stage_output       (only during calibration)
+    ├── RecordingManager.on_data_for_recording  (filters to 'raw' stage only; writes when is_recording=True)
+    └── CalibrationDialog.on_stage_output       (filters to 'filtered' stage only; only during calibration)
 
 StreamingController
     ├── start_streaming() → sets receiver_thread.running = True, starts QTimer(16ms)
@@ -261,9 +261,9 @@ Calibration establishes two reference values per channel from a live recording s
 
 `CalibrationDialog` runs a two-phase timed protocol:
 
-1. **Rest phase** (3 seconds): Subject relaxes completely. The dialog subscribes to the `filtered` stage signal and collects per-packet RMS values for each channel.
+1. **Rest phase** (5 seconds): Subject relaxes completely. The dialog subscribes to the `filtered` stage signal and collects per-packet RMS values for each channel.
 
-2. **Contraction phase** (3 seconds): Subject performs a maximum voluntary contraction. The same RMS collection runs.
+2. **Contraction phase** (5 seconds): Subject performs a maximum voluntary contraction. The same RMS collection runs.
 
 ### Threshold Computation
 
@@ -303,7 +303,7 @@ The `1e-10` prevents division by zero. Values above 1.0 (contraction exceeding t
 
 Each `Track` is a pyqtgraph `PlotWidget` containing one `PlotDataItem` (curve) per channel. Data is stored in a **circular buffer** of shape `(nchannels, buffer_size)` where `buffer_size = int(fs * plot_time)`. On each `feed()` call, new samples are written into the buffer at the current write pointer with wraparound. On each `draw()` call, the buffer contents are read and plotted against a time axis.
 
-A circular buffer is used because reallocating a new array on every packet would be wasteful. At 2000 Hz × 64 channels, the incoming data rate is 256,000 samples/second; the buffer must be updated efficiently without large memory allocations.
+A circular buffer is used because reallocating a new array on every packet would be wasteful. At 2000 Hz × 72 channels, the incoming data rate is 144,000 samples/second; the buffer must be updated efficiently without large memory allocations.
 
 **Plot time selector**: The top-bar dropdown (100ms, 250ms, 500ms, 1s, 5s, 10s) changes how much of the buffer is shown in the plot window. Choosing a shorter window allows viewing fine temporal detail; longer windows reveal slower trends.
 
@@ -327,9 +327,9 @@ The `QTimer` fires every `Config.UPDATE_RATE = 16 ms`, yielding approximately 62
 
 ## 10. Recording
 
-`RecordingManager` accumulates incoming data packets (connected to the `filtered` stage signal) in memory and writes them to a timestamped CSV file when recording is stopped.
+`RecordingManager` accumulates incoming data packets (connected to the `raw` stage signal) in memory and writes them to a timestamped CSV file when recording is stopped.
 
-**Maximum recording length**: `max_samples=1_000_000` packets. An overflow signal triggers a warning dialog and stops recording automatically, preventing unbounded memory growth.
+**Maximum recording length**: `max_samples=1_000_000` samples. An overflow signal triggers a warning dialog and stops recording automatically, preventing unbounded memory growth.
 
 **File location**: Determined by `app/core/paths.py:get_data_dir()`, which returns a path adjacent to the executable (PyInstaller frozen build) or adjacent to the script root (development). This ensures recordings are never written inside the application package directory.
 

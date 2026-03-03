@@ -114,7 +114,7 @@ mobile_app/
     │   ├── device.py               SessantaquattroPlus — TCP protocol
     │   └── paths.py                Android-aware data directory resolution
     ├── data/
-    │   └── data_receiver.py        DataReceiverThread — background TCP reader (threading.Thread)
+    │   └── data_receiver.py        DataReceiverThread — background TCP reader (threading.Thread) [planned, not yet created]
     ├── managers/
     │   ├── recording_manager.py    Accumulates raw samples and writes CSV files
     │   └── streaming_controller.py Manages thread state and Kivy Clock tick
@@ -122,7 +122,8 @@ mobile_app/
     │   ├── iir_filter.py           Pure-numpy IIR filter, zero-phase, peak detection, resampling
     │   ├── filters.py              Bandpass, notch, rectify (uses pre-computed coefficients)
     │   ├── features.py             Post-hoc EMG feature extraction (6 analyses)
-    │   └── pipeline.py             ProcessingPipeline registry (same pattern as desktop)
+    │   ├── pipeline.py             ProcessingPipeline registry (same pattern as desktop)
+    │   └── transforms.py           FFT transform
     └── ui/
         ├── screens/
         │   ├── selection_screen.py     Mode selection (entry screen)
@@ -210,15 +211,15 @@ Bits 4–5   : EXTEN — extension factor
 Bit  6     : HPF   — hardware high-pass filter (1 = 10.5 Hz enabled)
 Bit  7     : HRES  — ADC resolution (0 = 16-bit)
 Bits 8–10  : MODE  — working mode (0 = monopolar)
-Bits 11–12 : NCH   — channel count selector (3 = 64 ch in monopolar mode)
+Bits 11–12 : NCH   — channel count selector (3 = 72 ch in monopolar mode)
 Bits 13–14 : FSAMP — sampling frequency (2 = 2000 Hz)
 ```
 
-Defaults: `FSAMP=2` (2000 Hz), `NCH=3` (64 channels), `MODE=0` (monopolar), `HPF=1`, `GO=1`. These are defined as constants in `app/core/config.py` (`DEVICE_FSAMP`, `DEVICE_NCH`, etc.) so they appear in one place.
+Defaults: `FSAMP=2` (2000 Hz), `NCH=3` (72 channels — 64 EMG + 8 auxiliary), `MODE=0` (monopolar), `HPF=1`, `GO=1`. These are defined as constants in `app/core/config.py` (`DEVICE_FSAMP`, `DEVICE_NCH`, etc.) so they appear in one place.
 
 ### Packet Format
 
-At 2000 Hz with 64 channels: each packet = `64 × 2 × 125 = 16000 bytes`. The device sends 16 packets per second. Each sample is a **big-endian signed 16-bit integer** (range: −32768 to +32767). Packets are interleaved: all channels for sample 0, then all channels for sample 1, etc. After unpacking, the array is reshaped to `(nchannels, n_samples)`.
+At 2000 Hz with 72 channels: each packet = `72 × 2 × 125 = 18000 bytes`. The device sends 16 packets per second. Each sample is a **big-endian signed 16-bit integer** (range: −32768 to +32767). Packets are interleaved: all channels for sample 0, then all channels for sample 1, etc. After unpacking, the array is reshaped to `(nchannels, n_samples)`.
 
 ---
 
@@ -226,7 +227,7 @@ At 2000 Hz with 64 channels: each packet = `64 × 2 × 125 = 16000 bytes`. The d
 
 ```
 Device (WiFi TCP)
-    │  16000 bytes/packet × 16 packets/sec = 2000 Hz × 64 channels
+    │  18000 bytes/packet × 16 packets/sec = 2000 Hz × 72 channels
     ▼
 DataReceiverThread  (daemon threading.Thread — never restarted)
     │
@@ -472,7 +473,7 @@ The 8×8 grid is divided into 16 non-overlapping 2×2 sub-blocks (a 4×4 arrange
 
 **CSV format**: One row per sample (not per packet), columns: `Timestamp, Channel_1, Channel_2, ..., Channel_72`. The timestamp is wall-clock time in seconds since recording start (`time.time() - recording_start_time`). All 72 channels (including auxiliary) are saved.
 
-**Why per-sample rows?** The desktop app records per-packet rows (one row = 125 samples averaged). The mobile records per-sample rows, preserving the full 2000 Hz temporal resolution needed for feature extraction.
+**Why per-sample rows?** Both the mobile and desktop apps record per-sample rows, preserving the full 2000 Hz temporal resolution needed for feature extraction.
 
 **Save in background**: CSV writing is done in a daemon thread (`threading.Thread(target=save).start()`) to prevent the Kivy UI from freezing during the file I/O. When done, `Clock.schedule_once` fires `_on_save_done` on the main thread to restore button state.
 
@@ -686,7 +687,7 @@ The desktop uses pyqtgraph for all plots. The mobile uses custom Kivy canvas wid
 | MVC | Maximum Voluntary Contraction. The maximum force a subject can produce; used as normalization reference. |
 | NDK | Android Native Development Kit. Used to compile C/Fortran extensions for ARM. |
 | p4a | python-for-android. Cross-compiles Python and dependencies to ARM binary code. |
-| Packet | One chunk of TCP data from the device. At 2000 Hz, 64 channels: 16000 bytes, 125 samples, 16 packets/sec. |
+| Packet | One chunk of TCP data from the device. At 2000 Hz, 72 channels: 18000 bytes, 125 samples, 16 packets/sec. |
 | Pending-data pattern | `_on_data()` stores latest data to `_pending_data`; 60fps tick reads and clears it. Prevents stacked redraws. |
 | `ScreenManager` | Kivy container for multiple `Screen` objects; shows one at a time with transitions. |
 | TKEO | Teager-Kaiser Energy Operator: Ψ(x[n]) = x[n]² − x[n−1]·x[n+1]. Amplifies energy changes for onset detection. |

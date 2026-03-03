@@ -18,7 +18,12 @@ source.include_patterns = assets/*
 requirements = python3,kivy==2.3.0,numpy
 
 # Android permissions
-android.permissions = INTERNET
+# MANAGE_EXTERNAL_STORAGE: allows read/write anywhere on the filesystem (API 30+).
+# Required to save/load recordings from /sdcard/Documents/OTB_EMG/ so files are
+# visible in any file manager and transferable via USB.
+# After install, grant this manually: Settings → Apps → OTB EMG App → Permissions →
+# Files and media → Allow management of all files.
+android.permissions = INTERNET,MANAGE_EXTERNAL_STORAGE
 
 # Android API targets
 android.api = 33

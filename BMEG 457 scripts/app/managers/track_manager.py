@@ -3,6 +3,7 @@
 from PyQt5 import QtWidgets
 import numpy as np
 from app.core.track import Track
+from app.core.config import Config
 
 
 def _make_group_preset(preset):
@@ -109,7 +110,7 @@ class TrackManager:
             track = Track(title, self.device.frequency, n, offset, conv, self.plot_time)
             self.tracks.append(track)
 
-            track.plot_widget.setMinimumHeight(300)
+            track.plot_widget.setMinimumHeight(Config.TRACK_MIN_HEIGHT)
             layout.addWidget(track.plot_widget)
 
             is_accessory = "HDsEMG" not in title
@@ -134,7 +135,7 @@ class TrackManager:
                 # Only create the average track widget if an HDsEMG tab layout is provided
                 if self.hdsemg_scroll_layout is not None:
                     self.hd_average_track = Track("HD Average", self.device.frequency, 1, 0, conv, self.plot_time)
-                    self.hd_average_track.plot_widget.setMinimumHeight(300)
+                    self.hd_average_track.plot_widget.setMinimumHeight(Config.TRACK_MIN_HEIGHT)
                     hd_avg_container = QtWidgets.QWidget()
                     hd_avg_layout = QtWidgets.QVBoxLayout(hd_avg_container)
                     hd_avg_layout.addWidget(self.hd_average_track.plot_widget)
@@ -143,7 +144,7 @@ class TrackManager:
             if "Features" in title.lower() and self.feature_scroll_layout is not None:
                 self.feature_scroll_layout.addWidget(track_container)
                 self.feature_track = Track("Feature", self.device.frequency, 1, 0, conv, self.plot_time)
-                self.feature_track.plot_widget.setMinimumHeight(300)
+                self.feature_track.plot_widget.setMinimumHeight(Config.TRACK_MIN_HEIGHT)
                 feature_container = QtWidgets.QWidget()
                 feature_layout = QtWidgets.QVBoxLayout(feature_container)
                 feature_layout.addWidget(self.feature_track.plot_widget)
@@ -172,7 +173,7 @@ class TrackManager:
             tracks, containers = [], []
             for label in labels:
                 track = Track(label, self.device.frequency, 1, 0, conv, self.plot_time)
-                track.plot_widget.setMinimumHeight(200)
+                track.plot_widget.setMinimumHeight(Config.GROUP_TRACK_MIN_HEIGHT)
                 container = QtWidgets.QWidget()
                 QtWidgets.QVBoxLayout(container).addWidget(track.plot_widget)
                 self.scroll_layout.addWidget(container)

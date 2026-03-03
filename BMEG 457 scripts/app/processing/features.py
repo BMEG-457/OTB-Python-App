@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from typing import Optional
 import numpy as np
 
+from app.core.config import Config
+
 def rms(data):
     return np.sqrt(np.mean(data**2, axis=1, keepdims=True))
 
@@ -59,14 +61,14 @@ def compute_tkeo_activation_timing(
     raw_signal: np.ndarray,
     timestamps: np.ndarray,
     sample_rate: float,
-    bandpass_low: float = 20.0,
-    bandpass_high: float = 450.0,
-    smooth_cutoff: float = 10.0,
-    baseline_duration: float = 0.5,
-    k_threshold: float = 8.0,
-    amplitude_divisor: float = 4.0,
-    min_peak_distance_sec: float = 0.5,
-    backtrack_k: float = 3.0,
+    bandpass_low: float = Config.TKEO_BANDPASS_LOW,
+    bandpass_high: float = Config.TKEO_BANDPASS_HIGH,
+    smooth_cutoff: float = Config.TKEO_SMOOTH_CUTOFF,
+    baseline_duration: float = Config.TKEO_BASELINE_DURATION,
+    k_threshold: float = Config.TKEO_K_THRESHOLD,
+    amplitude_divisor: float = Config.TKEO_AMP_DIVISOR,
+    min_peak_distance_sec: float = Config.TKEO_MIN_PEAK_DIST,
+    backtrack_k: float = Config.TKEO_BACKTRACK_K,
 ) -> Optional[TKEOResult]:
     """Detect muscle activation onsets using the Teager-Kaiser Energy Operator (TKEO).
 
@@ -100,7 +102,7 @@ def compute_tkeo_activation_timing(
         ts = ts[mask]
         signal = signal[mask]
 
-        if len(ts) < 30:
+        if len(ts) < Config.TKEO_MIN_DATA_LEN:
             return None
 
         # Interpolate duplicated timestamps
@@ -121,7 +123,7 @@ def compute_tkeo_activation_timing(
         ts = ts[inc_mask]
         signal = signal[inc_mask]
 
-        if len(ts) < 30 or np.all(np.diff(ts) == 0):
+        if len(ts) < Config.TKEO_MIN_DATA_LEN or np.all(np.diff(ts) == 0):
             return None
 
         # Re-estimate sample rate from cleaned timestamps
@@ -131,11 +133,11 @@ def compute_tkeo_activation_timing(
             return None
         fs = 1.0 / np.median(np.diff(ts))
 
-        # --- Bandpass filter (20-450 Hz) ---
+        # --- Bandpass filter ---
         nyq = 0.5 * fs
         if bandpass_high >= nyq:
             bandpass_high = nyq * 0.95
-        b, a = butter(4, [bandpass_low / nyq, bandpass_high / nyq], btype='band')
+        b, a = butter(Config.FILTER_ORDER, [bandpass_low / nyq, bandpass_high / nyq], btype='band')
         filtered = filtfilt(b, a, signal)
 
         # --- Compute TKEO ---
@@ -148,7 +150,7 @@ def compute_tkeo_activation_timing(
         tkeo_rect = np.abs(tkeo)
 
         # --- Smooth with lowpass filter ---
-        b_lp, a_lp = butter(4, smooth_cutoff / nyq, btype='low')
+        b_lp, a_lp = butter(Config.FILTER_ORDER, smooth_cutoff / nyq, btype='low')
         envelope = filtfilt(b_lp, a_lp, tkeo_rect)
 
         # --- Baseline from first baseline_duration seconds ---
@@ -200,14 +202,14 @@ def compute_burst_duration(
     raw_signal: np.ndarray,
     timestamps: np.ndarray,
     sample_rate: float,
-    bandpass_low: float = 20.0,
-    bandpass_high: float = 450.0,
-    smooth_cutoff: float = 10.0,
-    baseline_duration: float = 0.5,
-    k_threshold: float = 8.0,
-    amplitude_divisor: float = 4.0,
-    backtrack_k: float = 3.0,
-    min_burst_duration: float = 0.05,
+    bandpass_low: float = Config.TKEO_BANDPASS_LOW,
+    bandpass_high: float = Config.TKEO_BANDPASS_HIGH,
+    smooth_cutoff: float = Config.TKEO_SMOOTH_CUTOFF,
+    baseline_duration: float = Config.TKEO_BASELINE_DURATION,
+    k_threshold: float = Config.TKEO_K_THRESHOLD,
+    amplitude_divisor: float = Config.TKEO_AMP_DIVISOR,
+    backtrack_k: float = Config.TKEO_BACKTRACK_K,
+    min_burst_duration: float = Config.BURST_MIN_DURATION,
 ) -> Optional[BurstDurationResult]:
     """Detect EMG bursts via TKEO and compute their duration statistics.
 
@@ -240,7 +242,7 @@ def compute_burst_duration(
         ts = ts[mask]
         signal = signal[mask]
 
-        if len(ts) < 30:
+        if len(ts) < Config.TKEO_MIN_DATA_LEN:
             return None
 
         # Interpolate duplicated timestamps
@@ -261,7 +263,7 @@ def compute_burst_duration(
         ts = ts[inc_mask]
         signal = signal[inc_mask]
 
-        if len(ts) < 30 or np.all(np.diff(ts) == 0):
+        if len(ts) < Config.TKEO_MIN_DATA_LEN or np.all(np.diff(ts) == 0):
             return None
 
         # Re-estimate sample rate from cleaned timestamps
@@ -275,7 +277,7 @@ def compute_burst_duration(
         nyq = 0.5 * fs
         if bandpass_high >= nyq:
             bandpass_high = nyq * 0.95
-        b, a = butter(4, [bandpass_low / nyq, bandpass_high / nyq], btype='band')
+        b, a = butter(Config.FILTER_ORDER, [bandpass_low / nyq, bandpass_high / nyq], btype='band')
         filtered = filtfilt(b, a, signal)
 
         # --- Compute TKEO ---
@@ -286,7 +288,7 @@ def compute_burst_duration(
 
         # --- Rectify and smooth ---
         tkeo_rect = np.abs(tkeo)
-        b_lp, a_lp = butter(4, smooth_cutoff / nyq, btype='low')
+        b_lp, a_lp = butter(Config.FILTER_ORDER, smooth_cutoff / nyq, btype='low')
         envelope = filtfilt(b_lp, a_lp, tkeo_rect)
 
         # --- Baseline from first baseline_duration seconds ---
@@ -378,8 +380,8 @@ def compute_bilateral_symmetry(
     signal_2: np.ndarray,
     timestamps_2: np.ndarray,
     sample_rate_2: float,
-    window_sec: float = 0.25,
-    step_sec: float = 0.05,
+    window_sec: float = Config.BILATERAL_WINDOW,
+    step_sec: float = Config.BILATERAL_STEP,
 ) -> Optional[BilateralSymmetryResult]:
     """Compute bilateral symmetry index between two EMG signals.
 
@@ -532,13 +534,13 @@ def compute_fatigue(
     raw_signal: np.ndarray,
     timestamps: np.ndarray,
     sample_rate: float,
-    bandpass_low: float = 20.0,
-    bandpass_high: float = 450.0,
-    baseline_duration: float = 0.5,
-    rms_threshold: float = 0.317,
-    mf_threshold: float = -0.89,
-    window_duration: float = 0.5,
-    step_duration: float = 0.1,
+    bandpass_low: float = Config.TKEO_BANDPASS_LOW,
+    bandpass_high: float = Config.TKEO_BANDPASS_HIGH,
+    baseline_duration: float = Config.FATIGUE_BASELINE,
+    rms_threshold: float = Config.FATIGUE_RMS_THRESHOLD,
+    mf_threshold: float = Config.FATIGUE_MF_THRESHOLD,
+    window_duration: float = Config.FATIGUE_WINDOW,
+    step_duration: float = Config.FATIGUE_STEP,
 ) -> Optional[FatigueResult]:
     """Detect muscle fatigue based on RMS increase and median frequency decline.
 
@@ -602,7 +604,7 @@ def compute_fatigue(
         nyq = 0.5 * fs
         if bandpass_high >= nyq:
             bandpass_high = nyq * 0.95
-        b, a = butter(4, [bandpass_low / nyq, bandpass_high / nyq], btype='band')
+        b, a = butter(Config.FILTER_ORDER, [bandpass_low / nyq, bandpass_high / nyq], btype='band')
         filtered = filtfilt(b, a, signal)
 
         # Rectified signal for RMS analysis
@@ -687,8 +689,8 @@ def compute_centroid_shift(
     data_64ch: np.ndarray,
     timestamps: np.ndarray,
     sample_rate: float,
-    window_duration: float = 0.5,
-    step_duration: float = 0.1,
+    window_duration: float = Config.CENTROID_WINDOW,
+    step_duration: float = Config.CENTROID_STEP,
 ) -> Optional[CentroidShiftResult]:
     """Track the weighted activation centroid of the HD-EMG 8x8 grid over time.
 
@@ -712,7 +714,7 @@ def compute_centroid_shift(
         CentroidShiftResult with centroid time series and displacement, or None on failure.
     """
     try:
-        if data_64ch.shape[0] != 64:
+        if data_64ch.shape[0] != Config.EMG_CHANNELS:
             return None
 
         ts = timestamps.copy()
@@ -759,9 +761,10 @@ def compute_centroid_shift(
             return None
 
         # Precompute grid column/row for each channel index.
-        # channel_idx = col * 8 + (7 - row)  →  col = ch // 8, row = 7 - (ch % 8)
-        ch_cols = np.array([ch // 8 for ch in range(64)], dtype=float)
-        ch_rows = np.array([7 - (ch % 8) for ch in range(64)], dtype=float)
+        # channel_idx = col * GRID_COLS + (GRID_ROWS-1 - row)
+        n_ch = Config.EMG_CHANNELS
+        ch_cols = np.array([ch // Config.GRID_COLS for ch in range(n_ch)], dtype=float)
+        ch_rows = np.array([(Config.GRID_ROWS - 1) - (ch % Config.GRID_ROWS) for ch in range(n_ch)], dtype=float)
 
         centroid_x_list = []
         centroid_y_list = []
@@ -830,8 +833,8 @@ def compute_spatial_nonuniformity(
     timestamps: np.ndarray,
     sample_rate: float,
     threshold_per_channel: Optional[np.ndarray] = None,
-    window_duration: float = 0.5,
-    step_duration: float = 0.1,
+    window_duration: float = Config.SPNU_WINDOW,
+    step_duration: float = Config.SPNU_STEP,
 ) -> Optional[SpatialNonUniformityResult]:
     """Track spatial activation non-uniformity and active area of the HD-EMG 8x8 grid over time.
 
@@ -857,7 +860,7 @@ def compute_spatial_nonuniformity(
         or None on failure.
     """
     try:
-        if data_64ch.shape[0] != 64:
+        if data_64ch.shape[0] != Config.EMG_CHANNELS:
             return None
 
         ts = timestamps.copy()
@@ -901,7 +904,7 @@ def compute_spatial_nonuniformity(
             return None
 
         threshold_source = 'calibration' if threshold_per_channel is not None else 'auto'
-        eps = 1e-12  # small constant to avoid log(0)
+        eps = Config.SPNU_EPSILON
 
         cv_list = []
         entropy_list = []
@@ -929,9 +932,9 @@ def compute_spatial_nonuniformity(
 
             # Activation area
             if threshold_per_channel is not None:
-                active = float(np.sum(w > threshold_per_channel)) / 64.0
+                active = float(np.sum(w > threshold_per_channel)) / Config.EMG_CHANNELS
             else:
-                active = float(np.sum(w > mean_w)) / 64.0
+                active = float(np.sum(w > mean_w)) / Config.EMG_CHANNELS
 
             cv_list.append(cv)
             entropy_list.append(entropy)

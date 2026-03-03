@@ -2,6 +2,8 @@
 
 from PyQt5 import QtWidgets, QtGui
 
+from app.core.config import Config
+
 
 class DataViewingPanel(QtWidgets.QWidget):
     """Control panel for data viewing settings: channel selection and signal processing."""
@@ -71,7 +73,7 @@ class DataViewingPanel(QtWidgets.QWidget):
         # RMS window size input
         rms_layout = QtWidgets.QHBoxLayout()
         rms_layout.addWidget(QtWidgets.QLabel("RMS Window:"))
-        self.rms_window_input = QtWidgets.QLineEdit("50")
+        self.rms_window_input = QtWidgets.QLineEdit(str(Config.RMS_WINDOW_DEFAULT))
         self.rms_window_input.setMaximumWidth(60)
         self.rms_window_input.setValidator(QtGui.QIntValidator(1, 10000))
         rms_layout.addWidget(self.rms_window_input)
@@ -81,7 +83,7 @@ class DataViewingPanel(QtWidgets.QWidget):
         # Lowpass cutoff input
         lp_layout = QtWidgets.QHBoxLayout()
         lp_layout.addWidget(QtWidgets.QLabel("LP Cutoff:"))
-        self.lowpass_cutoff_input = QtWidgets.QLineEdit("10")
+        self.lowpass_cutoff_input = QtWidgets.QLineEdit(str(Config.LP_CUTOFF_DEFAULT))
         self.lowpass_cutoff_input.setMaximumWidth(60)
         self.lowpass_cutoff_input.setValidator(QtGui.QDoubleValidator(0.1, 1000, 1))
         lp_layout.addWidget(self.lowpass_cutoff_input)

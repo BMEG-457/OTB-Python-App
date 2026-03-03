@@ -1,6 +1,8 @@
 import numpy as np
 import pyqtgraph as pg
 
+from app.core.config import Config
+
 # individual plots
 class Track:
     def __init__(self, title, frequency, num_channels, offset, conv_fact, plot_time=1):
@@ -19,7 +21,7 @@ class Track:
         self.plot_widget.setXRange(0, self.plot_time)
         self.plot_widget.setMouseEnabled(x=True, y=True)
         self.plot_widget.showGrid(x=True, y=True, alpha=0.3)
-        self.plot_widget.getViewBox().setBackgroundColor((30, 30, 30))
+        self.plot_widget.getViewBox().setBackgroundColor(Config.COLOR_TRACK_BG)
         self.plot_widget.setAntialiasing(True)
         self.plot_widget.enableAutoRange()
 
@@ -32,11 +34,11 @@ class Track:
 
         self.curves = []
         for i in range(num_channels):
-            pen = pg.mkPen(color=(255, 255, 255), width=1) if title in [
+            pen = pg.mkPen(color=Config.COLOR_CURVE, width=Config.CURVE_LINE_WIDTH) if title in [
                 "AUX 1", "AUX 2", "Quaternions", "Buffer", "Ramp"
-            ] else pg.mkPen(color=i, width=1)
+            ] else pg.mkPen(color=i, width=Config.CURVE_LINE_WIDTH)
 
-            curve_name = f"Ch {i+1}" if i < 8 or num_channels <= 8 else None
+            curve_name = f"Ch {i+1}" if i < Config.CHANNEL_NAMING_MAX or num_channels <= Config.CHANNEL_NAMING_MAX else None
             self.curves.append(self.plot_widget.plot(pen=pen, name=curve_name))
 
         # by default all channels are visible; use set_visible_channels to change

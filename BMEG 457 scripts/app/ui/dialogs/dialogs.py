@@ -3,6 +3,8 @@
 from PyQt5 import QtWidgets, QtCore
 import numpy as np
 
+from app.core.config import Config
+
 
 class CalibrationDialog(QtWidgets.QDialog):
     """Modal dialog that collects RMS data during rest and contraction phases."""
@@ -79,33 +81,33 @@ class CalibrationDialog(QtWidgets.QDialog):
         Returns:
             Fixed mvc_rms array with interpolated values for low channels
         """
-        if len(mvc_rms) < 64:
-            # Not enough channels for 8x8 grid, return as-is
+        if len(mvc_rms) < Config.EMG_CHANNELS:
+            # Not enough channels for grid, return as-is
             return mvc_rms
-        
-        # Only process first 64 channels (8x8 HDsEMG grid)
-        grid_channels = mvc_rms[:64].copy()
-        
+
+        # Only process first EMG_CHANNELS (HDsEMG grid)
+        grid_channels = mvc_rms[:Config.EMG_CHANNELS].copy()
+
         # Define threshold for "unreasonably low" - use median of all channels
         median_mvc = np.median(grid_channels)
-        low_threshold = median_mvc * 0.1  # Channels below 10% of median are considered bad
+        low_threshold = median_mvc * Config.BAD_CHANNEL_FRACTION
         
         print(f"[CALIBRATION] MVC median: {median_mvc:.6f}, low threshold: {low_threshold:.6f}")
         
-        # Reshape to 8x8 grid for spatial operations
-        # Note: Channel mapping is col * 8 + (7 - row), so we need to reshape carefully
-        grid = np.zeros((8, 8))
-        for col in range(8):
-            for row in range(8):
-                channel_idx = col * 8 + (7 - row)
+        # Reshape to grid for spatial operations
+        R, C = Config.GRID_ROWS, Config.GRID_COLS
+        grid = np.zeros((R, C))
+        for col in range(C):
+            for row in range(R):
+                channel_idx = col * C + (R - 1 - row)
                 grid[row, col] = grid_channels[channel_idx]
-        
+
         # Find and fix low channels
         low_channels = []
-        for col in range(8):
-            for row in range(8):
+        for col in range(C):
+            for row in range(R):
                 if grid[row, col] < low_threshold:
-                    channel_idx = col * 8 + (7 - row)
+                    channel_idx = col * C + (R - 1 - row)
                     low_channels.append(channel_idx)
                     
                     # Get neighbors in 3x3 window (excluding center)
@@ -115,7 +117,7 @@ class CalibrationDialog(QtWidgets.QDialog):
                             if dr == 0 and dc == 0:
                                 continue  # Skip center
                             nr, nc = row + dr, col + dc
-                            if 0 <= nr < 8 and 0 <= nc < 8:
+                            if 0 <= nr < R and 0 <= nc < C:
                                 neighbor_val = grid[nr, nc]
                                 # Only use neighbors that are above threshold
                                 if neighbor_val >= low_threshold:
@@ -137,13 +139,13 @@ class CalibrationDialog(QtWidgets.QDialog):
             print("[CALIBRATION] No low channels detected")
         
         # Convert grid back to channel array
-        for col in range(8):
-            for row in range(8):
-                channel_idx = col * 8 + (7 - row)
+        for col in range(C):
+            for row in range(R):
+                channel_idx = col * C + (R - 1 - row)
                 grid_channels[channel_idx] = grid[row, col]
-        
+
         # Update mvc_rms with fixed values
-        mvc_rms[:64] = grid_channels
+        mvc_rms[:Config.EMG_CHANNELS] = grid_channels
         return mvc_rms
 
     def start_calibration(self):
@@ -189,13 +191,8 @@ class CalibrationDialog(QtWidgets.QDialog):
     def on_stage_output(self, stage_name, data):
         """Collect RMS from filtered signal."""
         if stage_name == 'filtered' and self.countdown_timer.isActive():
-            # Filter out saturated values before computing RMS
-            # Saturation indicates hanging/disconnected electrodes
-            saturation_threshold_low = -32760  # Close to -32768 (int16 min)
-            saturation_threshold_high = 32760   # Close to 32767 (int16 max)
-            
             # Create mask for non-saturated values
-            non_saturated_mask = (data > saturation_threshold_low) & (data < saturation_threshold_high)
+            non_saturated_mask = (data > Config.SATURATION_LOW) & (data < Config.SATURATION_HIGH)
             
             # Compute RMS per channel (shape: channels x samples)
             # data shape is (channels, samples)
@@ -245,9 +242,8 @@ class CalibrationDialog(QtWidgets.QDialog):
         print(f"[CALIBRATION] Rest samples collected: {len(self.rest_rms_values)}")
         print(f"[CALIBRATION] Contraction samples collected: {len(self.contraction_rms_values)}")
         
-        # Check if we have any data (adjust minimum required samples here)
-        min_samples_required = 1  # Lower this if you want to allow calibration with less data
-        
+        min_samples_required = Config.MIN_CAL_SAMPLES
+
         if len(self.rest_rms_values) < min_samples_required or len(self.contraction_rms_values) < min_samples_required:
             QtWidgets.QMessageBox.warning(self, "Calibration Failed", 
                                          f"Insufficient data collected.\n"
@@ -272,22 +268,18 @@ class CalibrationDialog(QtWidgets.QDialog):
         # Filter out saturation values (-32768, 32767) before calculating MVC
         # These values indicate hanging/disconnected electrodes
         mvc_rms = np.zeros(contraction_array.shape[1])  # One value per channel
-        saturation_threshold_low = -32760  # Close to -32768 (int16 min)
-        saturation_threshold_high = 32760   # Close to 32767 (int16 max)
-        
+
         for ch_idx in range(contraction_array.shape[1]):
             channel_data = contraction_array[:, ch_idx]
-            
+
             # Filter out saturated values
             non_saturated = channel_data[
-                (channel_data > saturation_threshold_low) & 
-                (channel_data < saturation_threshold_high)
+                (channel_data > Config.SATURATION_LOW) &
+                (channel_data < Config.SATURATION_HIGH)
             ]
-            
+
             if len(non_saturated) > 0:
-                # Use 99th percentile of non-saturated values as MVC
-                # This is more robust than max and avoids outliers
-                mvc_rms[ch_idx] = np.percentile(non_saturated, 99)
+                mvc_rms[ch_idx] = np.percentile(non_saturated, Config.MVC_PERCENTILE)
                 
                 # Log if we filtered out saturated values
                 if len(non_saturated) < len(channel_data):
@@ -302,8 +294,7 @@ class CalibrationDialog(QtWidgets.QDialog):
         # Fix unreasonably low MVC values by spatial interpolation (8x8 grid)
         mvc_rms = self._fix_low_channels_spatial(mvc_rms)
         
-        # Threshold = baseline_mean + 3*std (based on rest baseline)
-        threshold = baseline_rms + 3.0 * baseline_std
+        threshold = baseline_rms + Config.BASELINE_THRESHOLD_MULT * baseline_std
         
         # Display summary statistics
         mean_baseline = np.mean(baseline_rms)
@@ -333,7 +324,7 @@ class ChannelSelectorDialog(QtWidgets.QDialog):
 
         grid = QtWidgets.QGridLayout()
         self.checkboxes = []
-        cols = 8
+        cols = Config.GRID_COLS
         for i in range(num_channels):
             cb = QtWidgets.QCheckBox(f"{i+1}")
             cb.setChecked(True if selected is None else (i in selected))

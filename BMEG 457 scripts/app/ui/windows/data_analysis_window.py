@@ -8,6 +8,7 @@ import numpy as np
 from datetime import datetime
 
 from app.core.paths import get_recordings_dir, get_data_dir
+from app.core.config import Config
 from app.data.csv_loader import CSVDataLoader
 from app.managers.analysis_track_manager import AnalysisTrackManager
 from app.managers.time_navigation_controller import TimeNavigationController
@@ -40,7 +41,7 @@ class DataAnalysisWindow(QtWidgets.QWidget):
         self._last_bilateral_meta = {}    # file/channel names for bilateral symmetry export
 
         self.setWindowTitle("Data Analysis")
-        self.setGeometry(100, 100, 1200, 800)
+        self.setGeometry(100, 100, *Config.WINDOW_SIZE)
 
         self._setup_ui()
         self._connect_signals()
@@ -292,7 +293,7 @@ class DataAnalysisWindow(QtWidgets.QWidget):
         self.filename_label.setStyleSheet("color: black;")
 
         self.total_duration = self.csv_loader.get_duration()
-        channels = min(64, self.csv_loader.get_channel_count())
+        channels = min(Config.EMG_CHANNELS, self.csv_loader.get_channel_count())
         samples = self.csv_loader.get_sample_count()
         sample_rate = self.csv_loader.sample_rate
 
@@ -309,7 +310,7 @@ class DataAnalysisWindow(QtWidgets.QWidget):
         self._populate_channel_selectors(channels)
 
         # Set initial window duration (5 seconds or full duration if shorter)
-        initial_window = min(5.0, self.total_duration)
+        initial_window = min(Config.ANALYSIS_WINDOW_DEFAULT, self.total_duration)
         self.window_input.setText(str(initial_window))
         self.time_controller.reset(self.total_duration, initial_window)
 
@@ -711,14 +712,14 @@ class DataAnalysisWindow(QtWidgets.QWidget):
         ]
 
         abs_mean = abs(result.mean_si)
-        if abs_mean < 0.1:
-            assessment = "GOOD SYMMETRY (|mean SI| < 0.1)"
-        elif abs_mean < 0.25:
-            assessment = "MILD ASYMMETRY (0.1 < |mean SI| < 0.25)"
-        elif abs_mean < 0.5:
-            assessment = "MODERATE ASYMMETRY (0.25 < |mean SI| < 0.5)"
+        if abs_mean < Config.SYMMETRY_GOOD:
+            assessment = f"GOOD SYMMETRY (|mean SI| < {Config.SYMMETRY_GOOD})"
+        elif abs_mean < Config.SYMMETRY_MODERATE:
+            assessment = f"MILD ASYMMETRY ({Config.SYMMETRY_GOOD} < |mean SI| < {Config.SYMMETRY_MODERATE})"
+        elif abs_mean < Config.SYMMETRY_POOR:
+            assessment = f"MODERATE ASYMMETRY ({Config.SYMMETRY_MODERATE} < |mean SI| < {Config.SYMMETRY_POOR})"
         else:
-            assessment = "SEVERE ASYMMETRY (|mean SI| > 0.5)"
+            assessment = f"SEVERE ASYMMETRY (|mean SI| > {Config.SYMMETRY_POOR})"
 
         lines.append(f"  Assessment: {assessment}")
 
@@ -854,10 +855,10 @@ class DataAnalysisWindow(QtWidgets.QWidget):
             QtWidgets.QMessageBox.warning(self, "No Data", "Please load a CSV file first.")
             return
 
-        if self.csv_loader.data.shape[0] != 64:
+        if self.csv_loader.data.shape[0] != Config.EMG_CHANNELS:
             QtWidgets.QMessageBox.warning(
                 self, "Incompatible Data",
-                f"Centroid Shift requires exactly 64 channels (HD-EMG 8x8 grid).\n"
+                f"Centroid Shift requires exactly {Config.EMG_CHANNELS} channels (HD-EMG {Config.GRID_ROWS}x{Config.GRID_COLS} grid).\n"
                 f"This file has {self.csv_loader.data.shape[0]} channel(s)."
             )
             return
@@ -934,10 +935,10 @@ class DataAnalysisWindow(QtWidgets.QWidget):
             QtWidgets.QMessageBox.warning(self, "No Data", "Please load a CSV file first.")
             return
 
-        if self.csv_loader.data.shape[0] != 64:
+        if self.csv_loader.data.shape[0] != Config.EMG_CHANNELS:
             QtWidgets.QMessageBox.warning(
                 self, "Incompatible Data",
-                f"Spatial Non-Uniformity requires exactly 64 channels (HD-EMG 8x8 grid).\n"
+                f"Spatial Non-Uniformity requires exactly {Config.EMG_CHANNELS} channels (HD-EMG {Config.GRID_ROWS}x{Config.GRID_COLS} grid).\n"
                 f"This file has {self.csv_loader.data.shape[0]} channel(s)."
             )
             return
@@ -953,7 +954,7 @@ class DataAnalysisWindow(QtWidgets.QWidget):
                         vals = row.get('threshold_values', '')
                         if vals:
                             arr = [float(x) for x in vals.split(',') if x.strip()]
-                            if len(arr) == 64:
+                            if len(arr) == Config.EMG_CHANNELS:
                                 threshold_per_channel = np.array(arr)
             except Exception:
                 pass  # Fall through to auto-threshold
@@ -1016,7 +1017,7 @@ class DataAnalysisWindow(QtWidgets.QWidget):
             f"  Threshold source:      {result.threshold_source}",
             f"  Mean CV:               {mean_cv:.4f}  (higher = more uneven)",
             f"  Mean entropy:          {mean_entropy:.2f} bits  (max 6.00 = fully uniform)",
-            f"  Mean activation area:  {mean_area:.1f}% of 64 channels",
+            f"  Mean activation area:  {mean_area:.1f}% of {Config.EMG_CHANNELS} channels",
             f"  Peak activation area:  {peak_area:.1f}% at {peak_time:.2f}s",
         ]
         self.feature_results_text.setText("\n".join(lines))

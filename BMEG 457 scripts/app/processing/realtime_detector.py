@@ -2,6 +2,8 @@
 
 import numpy as np
 
+from app.core.config import Config
+
 
 class ContractionDetector:
     """Detects muscle contractions from normalized per-channel RMS values.
@@ -11,8 +13,8 @@ class ContractionDetector:
     - Contraction releases when mean normalized activation drops below OFF_THRESHOLD
     """
 
-    ON_THRESHOLD = 0.15   # 15% MVC average to trigger contraction
-    OFF_THRESHOLD = 0.08  # 8% MVC average to release
+    ON_THRESHOLD = Config.ON_THRESHOLD
+    OFF_THRESHOLD = Config.OFF_THRESHOLD
 
     def __init__(self):
         self.is_contracting = False

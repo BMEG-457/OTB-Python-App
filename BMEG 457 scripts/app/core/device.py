@@ -1,11 +1,13 @@
 import socket
 import sys
 
+from app.core.config import Config
+
 
 class SessantaquattroPlus:
-    def __init__(self, host="0.0.0.0", port=45454):
-        self.host = host
-        self.port = port
+    def __init__(self, host=None, port=None):
+        self.host = host if host is not None else Config.DEVICE_HOST
+        self.port = port if port is not None else Config.DEVICE_PORT
         self.nchannels = 72
         self.frequency = 2000
         self.server_socket = None
@@ -29,10 +31,10 @@ class SessantaquattroPlus:
             frequencies = {0: 500, 1: 1000, 2: 2000, 3: 4000}
         return frequencies.get(FSAMP, 2000)
 
-    def create_command(self, FSAMP=2, NCH=3, MODE=0, HRES=0, HPF=1, EXTEN=0, TRIG=0, REC=0, GO=1):
+    def create_command(self, FSAMP=None, NCH=None, MODE=None, HRES=None, HPF=None, EXTEN=0, TRIG=0, REC=0, GO=1):
         """
         Create command byte for Sessantaquattro+
-        
+
         FSAMP: Sampling frequency (0=500Hz, 1=1kHz, 2=2kHz, 3=4kHz)
         NCH: Number of channels (0=8, 1=16, 2=32, 3=64)
         MODE: Working mode (0=Monopolar, 1=Bipolar, 2=Differential, etc.)
@@ -43,6 +45,17 @@ class SessantaquattroPlus:
         REC: Recording on SD (0=stop, 1=rec)
         GO: Data transfer (0=stop, 1=go) - CRITICAL!
         """
+        if FSAMP is None:
+            FSAMP = Config.DEFAULT_FSAMP
+        if NCH is None:
+            NCH = Config.DEFAULT_NCH
+        if MODE is None:
+            MODE = Config.DEFAULT_MODE
+        if HPF is None:
+            HPF = Config.DEFAULT_HPF
+        if HRES is None:
+            HRES = Config.DEFAULT_HRES
+
         self.nchannels = self.get_num_channels(NCH, MODE)
         self.frequency = self.get_sampling_frequency(FSAMP, MODE)
 
@@ -66,54 +79,58 @@ class SessantaquattroPlus:
         print(f"  GO bit: {GO} {'(STARTED)' if GO else '(STOPPED!)'}")
         print(f"  Binary: {binary_command}")
         print(f"  Decimal: {Command}")
-        
-        return Command
-    
 
-    def is_connected_to_device_network(self, device_network_prefix="192.168.1"):
+        return Command
+
+
+    def is_connected_to_device_network(self, device_network_prefix=None):
         """Check if connected to the device's WiFi network"""
+        if device_network_prefix is None:
+            device_network_prefix = Config.DEVICE_NETWORK_PREFIX
         try:
             # Get the actual IP being used for network communication
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             s.connect(("8.8.8.8", 80))  # Doesn't actually send data
             local_ip = s.getsockname()[0]
             s.close()
-            
+
             print(f"Current IP: {local_ip}")
-            
+
             if not local_ip.startswith(device_network_prefix):
                 print(f"ERROR: Not connected to device network (expected {device_network_prefix}x)")
                 return False
-            
+
             return True
         except Exception as e:
             print(f"Error checking network: {e}")
             return False
-        
-    def start_server(self, connection_timeout=10):
+
+    def start_server(self, connection_timeout=None):
+        if connection_timeout is None:
+            connection_timeout = Config.CONNECTION_TIMEOUT
         # Pre-flight checks
         if not self.is_connected_to_device_network():
             print("Please connect to the Sessantaquattroplus device's WiFi network first")
             sys.exit(1)
-        
+
         try:
             self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            
+
             # Set a timeout for accept() to prevent indefinite hanging
             self.server_socket.settimeout(connection_timeout)
-            
+
             self.server_socket.bind((self.host, self.port))
             self.server_socket.listen(1)
             print(f"Server listening on {self.host}:{self.port}...")
             print(f"Waiting for Sessantaquattro+ to connect...")
-            
+
             try:
                 self.client_socket, addr = self.server_socket.accept()
                 # Remove timeout for ongoing communication
                 self.client_socket.settimeout(None)
                 print(f"Connection accepted from {addr}")
-                
+
             except socket.timeout:
                 print(f"ERROR: Device did not connect within {connection_timeout} seconds")
                 print("Make sure:")
@@ -122,13 +139,13 @@ class SessantaquattroPlus:
                 print("3. No firewall is blocking the connection")
                 self.server_socket.close()
                 sys.exit(1)
-                
+
         except socket.error as e:
             print(f"Server error: {e}")
             if self.server_socket:
                 self.server_socket.close()
             sys.exit(1)
-            
+
     def send_command(self, command):
         """Send command to start data acquisition"""
         try:

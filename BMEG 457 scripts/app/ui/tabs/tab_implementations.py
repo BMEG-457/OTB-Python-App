@@ -6,6 +6,7 @@ from PyQt5 import QtWidgets
 import pyqtgraph as pg
 import numpy as np
 from app.ui.tabs.base_tab import BaseTab
+from app.core.config import Config
 
 
 class AccessoryTab(BaseTab):
@@ -34,7 +35,7 @@ class HeatmapTab(BaseTab):
     
     def __init__(self, parent=None):
         # Initialize any state variables before calling super().__init__()
-        self.heatmap_data = np.zeros((8, 8))
+        self.heatmap_data = np.zeros((Config.GRID_ROWS, Config.GRID_COLS))
         self.heatmap_labels = []
         super().__init__(parent)
     
@@ -64,10 +65,9 @@ class HeatmapTab(BaseTab):
         colorbar.setImageItem(self.heatmap_img)
         
         # Add text labels for channel numbers
-        for row in range(8):
-            for col in range(8):
-                # Channel number: bottom-left is 1, going up by column
-                channel_num = col * 8 + (7 - row) + 1
+        for row in range(Config.GRID_ROWS):
+            for col in range(Config.GRID_COLS):
+                channel_num = col * Config.GRID_COLS + (Config.GRID_ROWS - 1 - row) + 1
                 text = pg.TextItem(str(channel_num), color='w', anchor=(0.5, 0.5))
                 text.setPos(col + 0.5, row + 0.5)
                 self.heatmap_plot.addItem(text)
@@ -94,11 +94,10 @@ class HeatmapTab(BaseTab):
         Args:
             normalized_rms: Array of 64 values normalized to [0, 1]
         """
-        if len(normalized_rms) >= 64:
-            # Reshape to 8x8 grid
-            for col in range(8):
-                for row in range(8):
-                    channel_idx = col * 8 + (7 - row)
+        if len(normalized_rms) >= Config.EMG_CHANNELS:
+            for col in range(Config.GRID_COLS):
+                for row in range(Config.GRID_ROWS):
+                    channel_idx = col * Config.GRID_COLS + (Config.GRID_ROWS - 1 - row)
                     if channel_idx < len(normalized_rms):
                         self.heatmap_data[row, col] = normalized_rms[channel_idx]
             

@@ -4,6 +4,7 @@ import time
 import socket
 from PyQt5 import QtCore
 from app.processing.pipeline import ProcessingPipeline, get_pipeline
+from app.core.config import Config
 
 
 class DataReceiverThread(QtCore.QThread):
@@ -28,14 +29,14 @@ class DataReceiverThread(QtCore.QThread):
         
         # Set socket timeout to prevent infinite blocking
         try:
-            self.client_socket.settimeout(5.0)  # 5 second timeout
-            print("[RECEIVER] Socket timeout set to 5 seconds")
+            self.client_socket.settimeout(Config.SOCKET_TIMEOUT)
+            print(f"[RECEIVER] Socket timeout set to {Config.SOCKET_TIMEOUT} seconds")
         except Exception as e:
             print(f"[RECEIVER] WARNING: Could not set socket timeout: {e}")
 
     def run(self):
         # Calculate expected packet size
-        expected_bytes = self.device.nchannels * 2 * (self.device.frequency // 16)
+        expected_bytes = self.device.nchannels * 2 * (self.device.frequency // Config.PACKET_SIZE_DIVISOR)
         print(f"[RECEIVER] Thread run() started")
         print(f"[RECEIVER] Device config: {self.device.nchannels} channels at {self.device.frequency}Hz")
         print(f"[RECEIVER] Expecting {expected_bytes} bytes per packet ({self.device.nchannels} channels)")
@@ -127,7 +128,7 @@ class DataReceiverThread(QtCore.QThread):
                     if self.packet_count == 1:
                         print(f"[RECEIVER] First packet processed successfully!")
                     
-                    if self.packet_count % 100 == 0:
+                    if self.packet_count % Config.FPS_LOG_INTERVAL == 0:
                         now = time.time()
                         elapsed = now - self.last_time
                         self.fps = 100 / elapsed if elapsed > 0 else 0

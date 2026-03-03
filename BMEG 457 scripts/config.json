@@ -1,0 +1,118 @@
+{
+  "device": {
+    "host": "0.0.0.0",
+    "port": 45454,
+    "network_prefix": "192.168.1",
+    "connection_timeout_s": 10,
+    "socket_timeout_s": 5.0,
+    "default_fsamp": 2,
+    "default_nch": 3,
+    "default_mode": 0,
+    "default_hpf": 1,
+    "default_hres": 0,
+    "packet_size_divisor": 16,
+    "fps_log_interval": 100
+  },
+  "recording": {
+    "max_samples": 1000000,
+    "saturation_low": -32760,
+    "saturation_high": 32760
+  },
+  "signal": {
+    "bandpass_low_hz": 20,
+    "bandpass_high_hz": 450,
+    "notch_freq_hz": 60,
+    "filter_order": 4,
+    "filter_order_small": 1,
+    "filter_min_samples": 10,
+    "notch_quality": 30,
+    "notch_min_samples": 15
+  },
+  "detection": {
+    "on_threshold": 0.15,
+    "off_threshold": 0.08
+  },
+  "calibration": {
+    "rest_duration_s": 5,
+    "contraction_duration_s": 5,
+    "mvc_percentile": 99,
+    "baseline_threshold_multiplier": 3.0,
+    "bad_channel_mvc_fraction": 0.1,
+    "min_calibration_samples": 1
+  },
+  "ui": {
+    "window_width": 1200,
+    "window_height": 800,
+    "update_rate_ms": 16,
+    "plot_height": 600,
+    "default_plot_time_s": 1,
+    "feature_rate_hz": 30,
+    "feature_plot_history_s": 10,
+    "feature_window_ms": 200,
+    "feature_plot_min_height": 200,
+    "track_min_height": 300,
+    "group_track_min_height": 200,
+    "control_panel_width": 200,
+    "init_delay_ms": 100,
+    "receiver_wait_timeout_ms": 2000,
+    "contraction_rate_window_s": 60.0,
+    "rms_window_default": 50,
+    "lp_cutoff_default_hz": 10,
+    "colors": {
+      "led_inactive": "#808080",
+      "led_contracting": "#FF4444",
+      "led_relaxed": "#00CC44",
+      "track_background": [30, 30, 30],
+      "curve_default": [255, 255, 255]
+    },
+    "symmetry_thresholds": {
+      "good": 0.1,
+      "moderate": 0.25,
+      "poor": 0.5
+    },
+    "analysis_window_default_s": 5.0
+  },
+  "hdemg": {
+    "emg_channels": 64,
+    "grid_rows": 8,
+    "grid_cols": 8,
+    "channel_naming_max": 8,
+    "curve_line_width": 1
+  },
+  "features": {
+    "tkeo": {
+      "bandpass_low_hz": 20.0,
+      "bandpass_high_hz": 450.0,
+      "smooth_cutoff_hz": 10.0,
+      "baseline_duration_s": 0.5,
+      "k_threshold": 8.0,
+      "amplitude_divisor": 4.0,
+      "min_peak_distance_s": 0.5,
+      "backtrack_k": 3.0,
+      "min_data_length": 30
+    },
+    "burst_duration": {
+      "min_duration_s": 0.05
+    },
+    "bilateral_symmetry": {
+      "window_s": 0.25,
+      "step_s": 0.05
+    },
+    "fatigue": {
+      "rms_threshold": 0.317,
+      "mf_threshold": -0.89,
+      "window_s": 0.5,
+      "step_s": 0.1,
+      "baseline_duration_s": 0.5
+    },
+    "centroid_shift": {
+      "window_s": 0.5,
+      "step_s": 0.1
+    },
+    "spatial_nonuniformity": {
+      "window_s": 0.5,
+      "step_s": 0.1,
+      "entropy_epsilon": 1e-12
+    }
+  }
+}

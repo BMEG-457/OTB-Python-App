@@ -117,7 +117,7 @@ class SoundtrackWindow(QtWidgets.QWidget):
         # Contraction indicator
         top_bar_layout.addSpacing(20)
         self.contraction_led = QtWidgets.QLabel("●")
-        self.contraction_led.setStyleSheet("color: #808080; font-size: 22px;")
+        self.contraction_led.setStyleSheet(f"color: {Config.COLOR_LED_INACTIVE}; font-size: 22px;")
         self.contraction_status_label = QtWidgets.QLabel("Not Calibrated")
         top_bar_layout.addWidget(self.contraction_led)
         top_bar_layout.addWidget(self.contraction_status_label)
@@ -174,10 +174,10 @@ class SoundtrackWindow(QtWidgets.QWidget):
         self.tracks = self.track_manager.tracks
         self.hdsemg_track = self.track_manager.hdsemg_track
 
-        # Feature tracks (low-rate, 30 Hz, 10-second rolling history)
-        _FEATURE_RATE = 30
-        _FEATURE_PLOT_TIME = 10
-        self.feature_window_ms = 200
+        # Feature tracks
+        _FEATURE_RATE = Config.FEATURE_RATE
+        _FEATURE_PLOT_TIME = Config.FEATURE_PLOT_TIME
+        self.feature_window_ms = Config.FEATURE_WINDOW_MS
         self._contraction_times = []
         features_tab = self._get_tab(FeaturesTab)
         if features_tab is not None:
@@ -186,7 +186,7 @@ class SoundtrackWindow(QtWidgets.QWidget):
             self.mf_feature_track = Track("Median Frequency (Hz)", _FEATURE_RATE, 1, 0, 1.0, _FEATURE_PLOT_TIME)
             self.rate_feature_track = Track("Contraction Rate (per min)", _FEATURE_RATE, 1, 0, 1.0, _FEATURE_PLOT_TIME)
             for _ft in (self.rms_feature_track, self.mf_feature_track, self.rate_feature_track):
-                _ft.plot_widget.setMinimumHeight(200)
+                _ft.plot_widget.setMinimumHeight(Config.FEATURE_PLOT_MIN_HEIGHT)
                 _c = QtWidgets.QWidget()
                 QtWidgets.QVBoxLayout(_c).addWidget(_ft.plot_widget)
                 feature_layout.addWidget(_c)
@@ -197,7 +197,7 @@ class SoundtrackWindow(QtWidgets.QWidget):
             self.rate_feature_track = None
 
         # Recording Manager
-        self.recording_manager = RecordingManager(max_samples=1000000)
+        self.recording_manager = RecordingManager()
         self.recording_manager.overflow_stop_requested.connect(self.handle_recording_overflow)
         self.recording_manager.status_update.connect(self.update_status)
 
@@ -205,7 +205,7 @@ class SoundtrackWindow(QtWidgets.QWidget):
         self.streaming_controller = None
         
         # Verify heatmap readiness after full initialization
-        QtCore.QTimer.singleShot(100, self.verify_heatmap_readiness)  # Delay to ensure all initialization is complete
+        QtCore.QTimer.singleShot(Config.INIT_DELAY_MS, self.verify_heatmap_readiness)
 
     def _connect_signals(self):
         """Connect all UI signals to handlers. Note: calibrate/stream/record buttons are wired in main.py."""
@@ -219,8 +219,8 @@ class SoundtrackWindow(QtWidgets.QWidget):
         get_pipeline('fft').add_stage(transforms.fft_transform)
         
         # Filtered pipeline - use lambda to provide required parameters
-        get_pipeline('filtered').add_stage(lambda data: filters.butter_bandpass(data, low=20, high=450, fs=self.device.frequency))
-        get_pipeline('filtered').add_stage(lambda data: filters.notch(data, freq=60, fs=self.device.frequency))
+        get_pipeline('filtered').add_stage(lambda data: filters.butter_bandpass(data, low=Config.BANDPASS_LOW, high=Config.BANDPASS_HIGH, fs=self.device.frequency))
+        get_pipeline('filtered').add_stage(lambda data: filters.notch(data, freq=Config.NOTCH_FREQ, fs=self.device.frequency))
         
         # Rectified pipeline
         get_pipeline('rectified').add_stage(filters.rectify)
@@ -261,18 +261,13 @@ class SoundtrackWindow(QtWidgets.QWidget):
             window_size = min(100, buf.shape[1])
             recent_data = buf[:, -window_size:]
 
-            # Filter out saturated values before computing RMS
-            saturation_threshold_low = -32760  # Close to -32768 (int16 min)
-            saturation_threshold_high = 32760   # Close to 32767 (int16 max)
-
             # Compute RMS per channel with saturation filtering
             current_rms = np.zeros(recent_data.shape[0])
             for ch_idx in range(recent_data.shape[0]):
                 channel_data = recent_data[ch_idx]
-                # Filter out saturated values
                 non_saturated = channel_data[
-                    (channel_data > saturation_threshold_low) &
-                    (channel_data < saturation_threshold_high)
+                    (channel_data > Config.SATURATION_LOW) &
+                    (channel_data < Config.SATURATION_HIGH)
                 ]
 
                 if len(non_saturated) > 0:
@@ -280,8 +275,9 @@ class SoundtrackWindow(QtWidgets.QWidget):
                 else:
                     current_rms[ch_idx] = 0.0
 
-            if len(current_rms) >= 64 and len(self.mvc_rms) >= 64:
-                normalized_rms = current_rms[:64] / (self.mvc_rms[:64] + 1e-10)
+            n = Config.EMG_CHANNELS
+            if len(current_rms) >= n and len(self.mvc_rms) >= n:
+                normalized_rms = current_rms[:n] / (self.mvc_rms[:n] + 1e-10)
                 normalized_rms = np.clip(normalized_rms, 0, 1)
                 heatmap_tab = self._get_tab(HeatmapTab)
                 if heatmap_tab:
@@ -298,13 +294,13 @@ class SoundtrackWindow(QtWidgets.QWidget):
     def _update_contraction_indicator(self, is_contracting: bool):
         """Update the LED and label to reflect current contraction state."""
         if not self.is_calibrated:
-            self.contraction_led.setStyleSheet("color: #808080; font-size: 22px;")
+            self.contraction_led.setStyleSheet(f"color: {Config.COLOR_LED_INACTIVE}; font-size: 22px;")
             self.contraction_status_label.setText("Not Calibrated")
         elif is_contracting:
-            self.contraction_led.setStyleSheet("color: #FF4444; font-size: 22px;")
+            self.contraction_led.setStyleSheet(f"color: {Config.COLOR_LED_CONTRACTING}; font-size: 22px;")
             self.contraction_status_label.setText("Contracting!")
         else:
-            self.contraction_led.setStyleSheet("color: #00CC44; font-size: 22px;")
+            self.contraction_led.setStyleSheet(f"color: {Config.COLOR_LED_RELAXED}; font-size: 22px;")
             self.contraction_status_label.setText("Relaxed")
 
     def change_group_preset(self, preset):
@@ -392,7 +388,7 @@ class SoundtrackWindow(QtWidgets.QWidget):
         if self.receiver_thread is not None:
             try:
                 self.receiver_thread.stop()
-                self.receiver_thread.wait(2000)  # Wait max 2 seconds
+                self.receiver_thread.wait(Config.RECEIVER_WAIT_MS)
             except Exception as e:
                 print(f"Error stopping receiver thread: {e}")
         
@@ -452,7 +448,7 @@ class SoundtrackWindow(QtWidgets.QWidget):
         # Stop old thread cleanly if still alive (e.g. slow exit after error).
         if self.receiver_thread is not None and self.receiver_thread.isRunning():
             self.receiver_thread.stop()
-            self.receiver_thread.wait(2000)
+            self.receiver_thread.wait(Config.RECEIVER_WAIT_MS)
 
         # Create fresh thread with updated socket (set_client_socket called before this).
         self.receiver_thread = DataReceiverThread(self.device, self.client_socket, self.tracks)
@@ -503,7 +499,7 @@ class SoundtrackWindow(QtWidgets.QWidget):
 
         # Filter saturated channels before computing
         window = buf[:, -window_samples:]
-        mask = np.all(np.abs(window) < 32760, axis=1)
+        mask = np.all(np.abs(window) < Config.SATURATION_HIGH, axis=1)
         if not mask.any():
             return
         clean = window[mask, :]
@@ -527,7 +523,7 @@ class SoundtrackWindow(QtWidgets.QWidget):
         # Contraction rate (contractions per minute in the last 60 seconds)
         if self.rate_feature_track is not None:
             now = _time.monotonic()
-            self._contraction_times = [t for t in self._contraction_times if now - t <= 60.0]
+            self._contraction_times = [t for t in self._contraction_times if now - t <= Config.CONTRACTION_RATE_WINDOW]
             rate = float(len(self._contraction_times))
             self.rate_feature_track.feed(np.array([[rate]]))
             self.rate_feature_track.draw()
@@ -539,7 +535,7 @@ class SoundtrackWindow(QtWidgets.QWidget):
                                          "Device not connected. Please connect device first.")
             return
         
-        dlg = CalibrationDialog(self, self.receiver_thread, rest_duration=3, contraction_duration=3)
+        dlg = CalibrationDialog(self, self.receiver_thread, rest_duration=Config.REST_DURATION, contraction_duration=Config.CONTRACTION_DURATION)
         dlg.calibration_complete.connect(self.on_calibration_complete)
         dlg.exec_()
     

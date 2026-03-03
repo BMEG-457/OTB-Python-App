@@ -7,6 +7,7 @@ import os
 import time
 
 from app.core.paths import get_recordings_dir
+from app.core.config import Config
 
 
 class RecordingManager(QtCore.QObject):
@@ -17,7 +18,9 @@ class RecordingManager(QtCore.QObject):
     # Signal emitted when recording status changes
     status_update = QtCore.pyqtSignal(str)
     
-    def __init__(self, max_samples=1000000):
+    def __init__(self, max_samples=None):
+        if max_samples is None:
+            max_samples = Config.MAX_RECORDING_SAMPLES
         super().__init__()
         self.recording_data = []  # List of (timestamp, channel_data) tuples
         self.recording_start_time = None

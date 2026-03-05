@@ -6,6 +6,9 @@ from PyQt5 import QtCore
 from scipy import signal
 from scipy.ndimage import uniform_filter1d
 
+from app.core.config import Config
+from app.processing.filters import butter_bandpass, notch as notch_filter
+
 
 class AnalysisTrack:
     """Single track for displaying EMG data with selectable channels and processing."""
@@ -33,6 +36,8 @@ class AnalysisTrack:
         self.sample_rate = sample_rate
 
         # Processing settings
+        self.apply_bandpass = True
+        self.apply_notch = True
         self.rectify = False
         self.envelope_type = 'none'  # 'none', 'rms', 'lowpass'
         self.rms_window = 50         # samples
@@ -136,16 +141,21 @@ class AnalysisTrack:
     def get_selected_channels(self) -> list:
         return list(self.selected_channels)
 
-    def set_processing(self, rectify: bool, envelope_type: str,
-                       rms_window: int = 50, lowpass_cutoff: float = 10):
+    def set_processing(self, bandpass: bool, notch: bool, rectify: bool,
+                       envelope_type: str, rms_window: int = 50,
+                       lowpass_cutoff: float = 10):
         """Set processing options and recompute processed data.
 
         Args:
+            bandpass: Apply bandpass filter (Config.BANDPASS_LOW–BANDPASS_HIGH Hz)
+            notch: Apply notch filter (Config.NOTCH_FREQ Hz)
             rectify: Whether to apply full-wave rectification
             envelope_type: 'none', 'rms', or 'lowpass'
             rms_window: Window size in samples for RMS envelope
             lowpass_cutoff: Cutoff frequency in Hz for lowpass filter
         """
+        self.apply_bandpass = bandpass
+        self.apply_notch = notch
         self.rectify = rectify
         self.envelope_type = envelope_type
         self.rms_window = rms_window
@@ -161,11 +171,27 @@ class AnalysisTrack:
 
         data = self.raw_data.copy()
 
-        # Step 1: Rectification (if enabled)
+        # Step 1: Bandpass filter (applied to all channels at once; filtfilt works on last axis)
+        if self.apply_bandpass:
+            try:
+                data = butter_bandpass(
+                    data, Config.BANDPASS_LOW, Config.BANDPASS_HIGH, self.sample_rate
+                )
+            except Exception as e:
+                print(f"Warning: Bandpass filter failed: {e}")
+
+        # Step 2: Notch filter
+        if self.apply_notch:
+            try:
+                data = notch_filter(data, Config.NOTCH_FREQ, self.sample_rate)
+            except Exception as e:
+                print(f"Warning: Notch filter failed: {e}")
+
+        # Step 3: Rectification (if enabled)
         if self.rectify:
             data = np.abs(data)
 
-        # Step 2: Envelope (if selected)
+        # Step 4: Envelope (if selected)
         if self.envelope_type == 'rms':
             data = self._compute_rms_envelope(data, self.rms_window)
         elif self.envelope_type == 'lowpass':

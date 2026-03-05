@@ -212,7 +212,14 @@ class DataAnalysisWindow(QtWidgets.QWidget):
         self.clear_results_button.setMaximumWidth(60)
         self.clear_results_button.clicked.connect(lambda: self.feature_results_text.clear())
         header_layout.addStretch()
-        header_layout.addWidget(QtWidgets.QLabel("Font:"))
+        header_layout.addWidget(QtWidgets.QLabel("UI Font:"))
+        self.ui_font_spinbox = QtWidgets.QSpinBox()
+        self.ui_font_spinbox.setRange(7, 24)
+        self.ui_font_spinbox.setValue(9)
+        self.ui_font_spinbox.setSuffix("px")
+        self.ui_font_spinbox.setMaximumWidth(65)
+        header_layout.addWidget(self.ui_font_spinbox)
+        header_layout.addWidget(QtWidgets.QLabel("Terminal:"))
         self.font_size_spinbox = QtWidgets.QSpinBox()
         self.font_size_spinbox.setRange(7, 24)
         self.font_size_spinbox.setValue(11)
@@ -239,11 +246,26 @@ class DataAnalysisWindow(QtWidgets.QWidget):
             "background-color: #1e1e1e; color: #d4d4d4; }"
         )
 
+    def _set_ui_font_size(self, size: int):
+        self.setStyleSheet(
+            f"QPushButton {{ font-size: {size}px; }} "
+            f"QLabel {{ font-size: {size}px; }} "
+            f"QCheckBox {{ font-size: {size}px; }} "
+            f"QRadioButton {{ font-size: {size}px; }} "
+            f"QComboBox {{ font-size: {size}px; }} "
+            f"QLineEdit {{ font-size: {size}px; }} "
+            f"QSpinBox {{ font-size: {size}px; }} "
+            f"QTabBar::tab {{ font-size: {size}px; }}"
+        )
+        # Re-apply terminal stylesheet so it isn't overridden
+        self._set_terminal_font_size(self.font_size_spinbox.value())
+
     def _connect_signals(self):
         """Connect all UI signals to handlers."""
         # File controls
         self.open_file_button.clicked.connect(self.open_file_dialog)
         self.font_size_spinbox.valueChanged.connect(self._set_terminal_font_size)
+        self.ui_font_spinbox.valueChanged.connect(self._set_ui_font_size)
 
         # Time navigation
         self.start_button.clicked.connect(self._go_to_start)
@@ -322,6 +344,9 @@ class DataAnalysisWindow(QtWidgets.QWidget):
         self.track_manager = AnalysisTrackManager(self.scroll_layout)
         self.track_manager.initialize_tracks_from_csv(self.csv_loader)
 
+        # Apply default processing (bandpass + notch checked by default)
+        self._apply_processing()
+
         # Populate channel selectors
         self._populate_channel_selectors(channels)
 
@@ -395,10 +420,10 @@ class DataAnalysisWindow(QtWidgets.QWidget):
 
         dvp = self.data_viewing_panel
 
-        # Get rectification setting
+        bandpass = dvp.bandpass_checkbox.isChecked()
+        notch = dvp.notch_checkbox.isChecked()
         rectify = dvp.rectify_checkbox.isChecked()
 
-        # Get envelope type
         if dvp.envelope_rms_radio.isChecked():
             envelope_type = 'rms'
         elif dvp.envelope_lowpass_radio.isChecked():
@@ -406,24 +431,19 @@ class DataAnalysisWindow(QtWidgets.QWidget):
         else:
             envelope_type = 'none'
 
-        # Get RMS window size
         try:
-            rms_window = int(dvp.rms_window_input.text())
-            if rms_window < 1:
-                rms_window = 1
+            rms_window = max(1, int(dvp.rms_window_input.text()))
         except ValueError:
-            rms_window = 50
+            rms_window = Config.RMS_WINDOW_DEFAULT
 
-        # Get lowpass cutoff
         try:
             lowpass_cutoff = float(dvp.lowpass_cutoff_input.text())
             if lowpass_cutoff <= 0:
-                lowpass_cutoff = 10
+                lowpass_cutoff = Config.LP_CUTOFF_DEFAULT
         except ValueError:
-            lowpass_cutoff = 10
+            lowpass_cutoff = Config.LP_CUTOFF_DEFAULT
 
-        # Apply processing
-        self.track_manager.set_processing(rectify, envelope_type, rms_window, lowpass_cutoff)
+        self.track_manager.set_processing(bandpass, notch, rectify, envelope_type, rms_window, lowpass_cutoff)
 
     def _on_activation_timings(self):
         """Compute TKEO activation timings on selected channel(s) and add feature tracks."""
@@ -1145,8 +1165,12 @@ class DataAnalysisWindow(QtWidgets.QWidget):
                 env_label = f"Lowpass ({dvp.lowpass_cutoff_input.text()} Hz)"
             else:
                 env_label = "None"
+            bandpassed = dvp.bandpass_checkbox.isChecked()
+            notched = dvp.notch_checkbox.isChecked()
             ch_names = ', '.join(self.csv_loader.channel_names[i] for i in selected)
             w.writerow([f'# Signal channels: {ch_names}'])
+            w.writerow([f'# Bandpass: {bandpassed}'])
+            w.writerow([f'# Notch: {notched}'])
             w.writerow([f'# Rectified: {rectified}'])
             w.writerow([f'# Envelope: {env_label}'])
 

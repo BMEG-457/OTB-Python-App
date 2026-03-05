@@ -132,18 +132,21 @@ class AnalysisTrackManager:
             return self.track.get_selected_channels()
         return []
 
-    def set_processing(self, rectify: bool, envelope_type: str,
-                       rms_window: int = 50, lowpass_cutoff: float = 10):
+    def set_processing(self, bandpass: bool, notch: bool, rectify: bool,
+                       envelope_type: str, rms_window: int = 50,
+                       lowpass_cutoff: float = 10):
         """Set processing options for the track.
 
         Args:
+            bandpass: Apply bandpass filter
+            notch: Apply notch filter
             rectify: Whether to apply full-wave rectification
             envelope_type: 'none', 'rms', or 'lowpass'
             rms_window: Window size in samples for RMS envelope
             lowpass_cutoff: Cutoff frequency in Hz for lowpass filter
         """
         if self.track:
-            self.track.set_processing(rectify, envelope_type, rms_window, lowpass_cutoff)
+            self.track.set_processing(bandpass, notch, rectify, envelope_type, rms_window, lowpass_cutoff)
 
     def add_feature_track(self, title: str, timestamps: np.ndarray,
                           data_1d: np.ndarray, sample_rate: float,

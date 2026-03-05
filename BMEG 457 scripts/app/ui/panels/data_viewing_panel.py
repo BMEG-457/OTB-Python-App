@@ -45,6 +45,20 @@ class DataViewingPanel(QtWidgets.QWidget):
         # Processing section
         ctrl_layout.addWidget(QtWidgets.QLabel("Processing:"))
 
+        # Bandpass filter checkbox (default on — raw data is unfiltered)
+        self.bandpass_checkbox = QtWidgets.QCheckBox(
+            f"Bandpass ({Config.BANDPASS_LOW}–{Config.BANDPASS_HIGH} Hz)"
+        )
+        self.bandpass_checkbox.setChecked(True)
+        ctrl_layout.addWidget(self.bandpass_checkbox)
+
+        # Notch filter checkbox (default on)
+        self.notch_checkbox = QtWidgets.QCheckBox(f"Notch ({Config.NOTCH_FREQ} Hz)")
+        self.notch_checkbox.setChecked(True)
+        ctrl_layout.addWidget(self.notch_checkbox)
+
+        ctrl_layout.addSpacing(5)
+
         # Rectification checkbox
         self.rectify_checkbox = QtWidgets.QCheckBox("Rectify")
         ctrl_layout.addWidget(self.rectify_checkbox)

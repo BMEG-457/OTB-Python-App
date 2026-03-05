@@ -35,10 +35,9 @@ class DataAnalysisWindow(QtWidgets.QWidget):
         self.time_controller = TimeNavigationController()
         self.total_duration = 0.0
 
-        # Last feature analysis results for export
-        self._last_feature_results = []   # list of (ch_idx, result) tuples
-        self._last_feature_type = None    # 'tkeo' | 'burst' | 'bilateral' | 'fatigue'
-        self._last_bilateral_meta = {}    # file/channel names for bilateral symmetry export
+        # Accumulated feature analysis results for export (persists across multiple analyses)
+        # type_key -> {'results': [(ch_idx, result), ...], 'meta': {}}
+        self._feature_store = {}
 
         self.setWindowTitle("Data Analysis")
         self.setGeometry(100, 100, *Config.WINDOW_SIZE)
@@ -213,6 +212,13 @@ class DataAnalysisWindow(QtWidgets.QWidget):
         self.clear_results_button.setMaximumWidth(60)
         self.clear_results_button.clicked.connect(lambda: self.feature_results_text.clear())
         header_layout.addStretch()
+        header_layout.addWidget(QtWidgets.QLabel("Font:"))
+        self.font_size_spinbox = QtWidgets.QSpinBox()
+        self.font_size_spinbox.setRange(7, 24)
+        self.font_size_spinbox.setValue(11)
+        self.font_size_spinbox.setSuffix("px")
+        self.font_size_spinbox.setMaximumWidth(65)
+        header_layout.addWidget(self.font_size_spinbox)
         header_layout.addWidget(self.clear_results_button)
         results_layout.addLayout(header_layout)
 
@@ -227,10 +233,17 @@ class DataAnalysisWindow(QtWidgets.QWidget):
 
         parent_splitter.addWidget(results_widget)
 
+    def _set_terminal_font_size(self, size: int):
+        self.feature_results_text.setStyleSheet(
+            f"QTextEdit {{ font-family: Consolas, monospace; font-size: {size}px; "
+            "background-color: #1e1e1e; color: #d4d4d4; }"
+        )
+
     def _connect_signals(self):
         """Connect all UI signals to handlers."""
         # File controls
         self.open_file_button.clicked.connect(self.open_file_dialog)
+        self.font_size_spinbox.valueChanged.connect(self._set_terminal_font_size)
 
         # Time navigation
         self.start_button.clicked.connect(self._go_to_start)
@@ -286,6 +299,9 @@ class DataAnalysisWindow(QtWidgets.QWidget):
                 f"Failed to load file: {file_path}"
             )
             return
+
+        # Clear accumulated feature results from any previous file
+        self._feature_store = {}
 
         # Update file info labels
         filename = os.path.basename(file_path)
@@ -436,9 +452,7 @@ class DataAnalysisWindow(QtWidgets.QWidget):
         sample_rate = self.csv_loader.sample_rate
         base_time = timestamps[0]
 
-        self._last_feature_results = []
-        self._last_feature_type = 'tkeo'
-        self._last_bilateral_meta = {}
+        self._feature_store['tkeo'] = {'results': []}
 
         errors = []
         results_text_parts = []
@@ -455,7 +469,7 @@ class DataAnalysisWindow(QtWidgets.QWidget):
                 errors.append(f"Channel {ch_idx + 1}")
                 continue
 
-            self._last_feature_results.append((ch_idx, result))
+            self._feature_store['tkeo']['results'].append((ch_idx, result))
 
             title = f"TKEO Activation - Ch {ch_idx + 1} ({len(result.onset_times)} onsets)"
             self.track_manager.add_feature_track(
@@ -513,9 +527,7 @@ class DataAnalysisWindow(QtWidgets.QWidget):
         timestamps = self.csv_loader.timestamps
         sample_rate = self.csv_loader.sample_rate
 
-        self._last_feature_results = []
-        self._last_feature_type = 'burst'
-        self._last_bilateral_meta = {}
+        self._feature_store['burst'] = {'results': []}
 
         errors = []
         results_text_parts = []
@@ -532,7 +544,7 @@ class DataAnalysisWindow(QtWidgets.QWidget):
                 errors.append(f"Channel {ch_idx + 1}")
                 continue
 
-            self._last_feature_results.append((ch_idx, result))
+            self._feature_store['burst']['results'].append((ch_idx, result))
 
             lines = [
                 f"Channel {ch_idx + 1}: Burst Duration Analysis",
@@ -636,9 +648,7 @@ class DataAnalysisWindow(QtWidgets.QWidget):
         self.track_manager.remove_feature_tracks()
         self.feature_results_text.clear()
 
-        self._last_feature_results = []
-        self._last_feature_type = 'bilateral'
-        self._last_bilateral_meta = {}
+        self._feature_store['bilateral'] = {'results': [], 'meta': {}}
 
         result = compute_bilateral_symmetry(
             signal_1=signal_1,
@@ -657,8 +667,8 @@ class DataAnalysisWindow(QtWidgets.QWidget):
             )
             return
 
-        self._last_feature_results = [(ch1_idx, result)]
-        self._last_bilateral_meta = {
+        self._feature_store['bilateral']['results'] = [(ch1_idx, result)]
+        self._feature_store['bilateral']['meta'] = {
             'file1': os.path.basename(self.csv_loader.file_path),
             'ch1_idx': ch1_idx,
             'file2': os.path.basename(file_path_2),
@@ -752,9 +762,7 @@ class DataAnalysisWindow(QtWidgets.QWidget):
         sample_rate = self.csv_loader.sample_rate
         base_time = timestamps[0]
 
-        self._last_feature_results = []
-        self._last_feature_type = 'fatigue'
-        self._last_bilateral_meta = {}
+        self._feature_store['fatigue'] = {'results': []}
 
         errors = []
         results_text_parts = []
@@ -771,7 +779,7 @@ class DataAnalysisWindow(QtWidgets.QWidget):
                 errors.append(f"Channel {ch_idx + 1}")
                 continue
 
-            self._last_feature_results.append((ch_idx, result))
+            self._feature_store['fatigue']['results'].append((ch_idx, result))
 
             # Add RMS trend as a feature track
             rms_title = f"Fatigue RMS - Ch {ch_idx + 1}"
@@ -866,9 +874,7 @@ class DataAnalysisWindow(QtWidgets.QWidget):
         self.track_manager.remove_feature_tracks()
         self.feature_results_text.clear()
 
-        self._last_feature_results = []
-        self._last_feature_type = 'centroid'
-        self._last_bilateral_meta = {}
+        self._feature_store['centroid'] = {'results': []}
 
         result = compute_centroid_shift(
             data_64ch=self.csv_loader.data,
@@ -884,7 +890,7 @@ class DataAnalysisWindow(QtWidgets.QWidget):
             )
             return
 
-        self._last_feature_results = [(0, result)]
+        self._feature_store['centroid']['results'] = [(0, result)]
 
         base_time = self.csv_loader.timestamps[0]
         rel_times = result.times - base_time
@@ -962,9 +968,7 @@ class DataAnalysisWindow(QtWidgets.QWidget):
         self.track_manager.remove_feature_tracks()
         self.feature_results_text.clear()
 
-        self._last_feature_results = []
-        self._last_feature_type = 'spatial'
-        self._last_bilateral_meta = {}
+        self._feature_store['spatial'] = {'results': []}
 
         result = compute_spatial_nonuniformity(
             data_64ch=self.csv_loader.data,
@@ -981,7 +985,7 @@ class DataAnalysisWindow(QtWidgets.QWidget):
             )
             return
 
-        self._last_feature_results = [(0, result)]
+        self._feature_store['spatial']['results'] = [(0, result)]
 
         base_time = self.csv_loader.timestamps[0]
         rel_times = result.times - base_time
@@ -1105,150 +1109,213 @@ class DataAnalysisWindow(QtWidgets.QWidget):
         try:
             with open(path, 'w', newline='', encoding='utf-8') as f:
                 w = csv.writer(f)
-
-                # Metadata
-                ts = self.csv_loader.timestamps
-                w.writerow(['# OTB-EMG Analysis Export'])
-                w.writerow([f'# Source: {os.path.basename(self.csv_loader.file_path)}'])
-                w.writerow([f'# Exported: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}'])
-                w.writerow([f'# Channels: {self.csv_loader.data.shape[0]}'])
-                w.writerow([f'# Sample rate: {self.csv_loader.sample_rate:.1f} Hz'])
-                w.writerow([f'# Duration: {ts[-1] - ts[0]:.3f} s'])
-                w.writerow([])
-
-                # Processed signal for each selected channel
-                selected = self.track_manager.get_selected_channels() if self.track_manager else []
-                if selected:
-                    dvp = self.data_viewing_panel
-                    rectified = dvp.rectify_checkbox.isChecked()
-                    if dvp.envelope_rms_radio.isChecked():
-                        env_label = f"RMS ({dvp.rms_window_input.text()} samples)"
-                    elif dvp.envelope_lowpass_radio.isChecked():
-                        env_label = f"Lowpass ({dvp.lowpass_cutoff_input.text()} Hz)"
-                    else:
-                        env_label = "None"
-
-                    for ch_idx in selected:
-                        ch_name = self.csv_loader.channel_names[ch_idx]
-                        processed = self.track_manager.track.data[ch_idx, :]
-                        w.writerow([f'## PROCESSED SIGNAL ({ch_name})'])
-                        w.writerow([f'# Rectified: {rectified}'])
-                        w.writerow([f'# Envelope: {env_label}'])
-                        w.writerow(['time_s', 'emg_value'])
-                        for t, v in zip(ts, processed):
-                            w.writerow([round(float(t), 6), round(float(v), 8)])
-                        w.writerow([])
-
-                # Feature results
-                if self._last_feature_results:
-                    self._write_feature_csv(w)
+                self._write_export_metadata(w)
+                headers, rows = self._build_export_table()
+                if headers:
+                    w.writerow(headers)
+                    w.writerows(rows)
                 else:
-                    w.writerow(['## No feature analysis has been run'])
+                    w.writerow(['# No signal channels selected and no feature analyses have been run'])
 
             QtWidgets.QMessageBox.information(self, "Export Complete", f"Saved to:\n{path}")
 
         except Exception as e:
             QtWidgets.QMessageBox.critical(self, "Export Error", f"Export failed: {e}")
 
-    def _write_feature_csv(self, w):
-        """Write feature analysis results to the CSV writer."""
-        base_time = self.csv_loader.timestamps[0]
+    def _write_export_metadata(self, w):
+        """Write comment rows with file info and scalar feature summaries above the data table."""
+        ts = self.csv_loader.timestamps
+        base_time = ts[0]
 
-        if self._last_feature_type == 'tkeo':
-            for ch_idx, result in self._last_feature_results:
-                w.writerow([f'## ACTIVATION TIMINGS (Channel {ch_idx + 1})'])
-                w.writerow([f'# Onsets detected: {len(result.onset_times)}'])
-                w.writerow([f'# Detection threshold: {result.detection_threshold:.8f}'])
-                w.writerow([f'# Backtrack threshold: {result.backtrack_threshold:.8f}'])
-                w.writerow(['onset_number', 'onset_time_s'])
-                for i, t in enumerate(result.onset_times):
-                    w.writerow([i + 1, round(float(t) - base_time, 6)])
-                w.writerow([])
-                w.writerow([f'## TKEO ENVELOPE (Channel {ch_idx + 1})'])
-                w.writerow(['time_s', 'tkeo_envelope'])
-                env_base = result.timestamps[0]
-                for t, v in zip(result.timestamps, result.tkeo_envelope):
-                    w.writerow([round(float(t) - env_base, 6), round(float(v), 10)])
-                w.writerow([])
+        w.writerow(['# OTB-EMG Analysis Export'])
+        w.writerow([f'# Source: {os.path.basename(self.csv_loader.file_path)}'])
+        w.writerow([f'# Exported: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}'])
+        w.writerow([f'# Channels: {self.csv_loader.data.shape[0]}'])
+        w.writerow([f'# Sample rate: {self.csv_loader.sample_rate:.1f} Hz'])
+        w.writerow([f'# Duration: {ts[-1] - ts[0]:.3f} s'])
+        w.writerow([])
 
-        elif self._last_feature_type == 'burst':
-            for ch_idx, result in self._last_feature_results:
-                w.writerow([f'## BURST DURATION (Channel {ch_idx + 1})'])
-                w.writerow([f'# Number of bursts: {result.num_bursts}'])
-                w.writerow([f'# Average duration: {result.avg_duration:.4f} s'])
-                w.writerow([f'# Std duration: {result.std_duration:.4f} s'])
-                w.writerow(['burst_number', 'duration_s'])
-                for i, d in enumerate(result.burst_durations):
-                    w.writerow([i + 1, round(float(d), 6)])
-                w.writerow([])
+        selected = self.track_manager.get_selected_channels() if self.track_manager else []
+        if selected:
+            dvp = self.data_viewing_panel
+            rectified = dvp.rectify_checkbox.isChecked()
+            if dvp.envelope_rms_radio.isChecked():
+                env_label = f"RMS ({dvp.rms_window_input.text()} samples)"
+            elif dvp.envelope_lowpass_radio.isChecked():
+                env_label = f"Lowpass ({dvp.lowpass_cutoff_input.text()} Hz)"
+            else:
+                env_label = "None"
+            ch_names = ', '.join(self.csv_loader.channel_names[i] for i in selected)
+            w.writerow([f'# Signal channels: {ch_names}'])
+            w.writerow([f'# Rectified: {rectified}'])
+            w.writerow([f'# Envelope: {env_label}'])
 
-        elif self._last_feature_type == 'bilateral':
-            meta = self._last_bilateral_meta
-            ch1_idx, result = self._last_feature_results[0]
-            w.writerow(['## BILATERAL SYMMETRY'])
-            w.writerow([f'# File 1: {meta.get("file1", "")}, Channel {meta.get("ch1_idx", 0) + 1}'])
-            w.writerow([f'# File 2: {meta.get("file2", "")}, Channel {meta.get("ch2_idx", 0) + 1}'])
-            w.writerow([f'# Overlap duration: {result.overlap_duration:.3f} s'])
-            w.writerow([f'# Window size: {result.window_duration:.3f} s'])
-            w.writerow([f'# Mean SI: {result.mean_si:+.6f}'])
-            w.writerow([f'# Std SI: {result.std_si:.6f}'])
-            w.writerow([f'# Max asymmetry: {result.max_asymmetry:.6f}'])
-            w.writerow([f'# Overall RMS File 1: {result.rms_file1:.8f}'])
-            w.writerow([f'# Overall RMS File 2: {result.rms_file2:.8f}'])
-            w.writerow(['time_s', 'symmetry_index'])
-            si_base = result.timestamps[0]
-            for t, v in zip(result.timestamps, result.symmetry_index):
-                w.writerow([round(float(t) - si_base, 6), round(float(v), 8)])
-            w.writerow([])
+        if 'tkeo' in self._feature_store:
+            for ch_idx, result in self._feature_store['tkeo']['results']:
+                w.writerow([
+                    f'# TKEO Ch{ch_idx + 1}: onsets={len(result.onset_times)}, '
+                    f'detect_thresh={result.detection_threshold:.8f}, '
+                    f'backtrack_thresh={result.backtrack_threshold:.8f}'
+                ])
 
-        elif self._last_feature_type == 'fatigue':
-            for ch_idx, result in self._last_feature_results:
-                w.writerow([f'## FATIGUE ANALYSIS (Channel {ch_idx + 1})'])
-                w.writerow([f'# Baseline RMS: {result.baseline_rms:.8f}'])
-                if result.time_to_rms_fatigue is not None and len(result.time_to_rms_fatigue) > 0:
-                    w.writerow([f'# RMS fatigue onset: {result.time_to_rms_fatigue[0] - base_time:.3f} s'])
-                else:
-                    w.writerow(['# RMS fatigue onset: Not detected'])
-                if result.time_to_mf_fatigue is not None and len(result.time_to_mf_fatigue) > 0:
-                    w.writerow([f'# MF fatigue onset: {result.time_to_mf_fatigue[0] - base_time:.3f} s'])
-                else:
-                    w.writerow(['# MF fatigue onset: Not detected'])
-                w.writerow(['time_s', 'rms_value', 'median_freq_hz'])
-                for t, r, m in zip(result.rms_times, result.rms_values, result.mf_values):
-                    w.writerow([round(float(t) - base_time, 6),
-                                round(float(r), 8),
-                                round(float(m), 4)])
-                w.writerow([])
+        if 'burst' in self._feature_store:
+            for ch_idx, result in self._feature_store['burst']['results']:
+                w.writerow([
+                    f'# Burst Ch{ch_idx + 1}: bursts={result.num_bursts}, '
+                    f'avg_duration={result.avg_duration:.4f}s, '
+                    f'std_duration={result.std_duration:.4f}s'
+                ])
 
-        elif self._last_feature_type == 'spatial':
-            _, result = self._last_feature_results[0]
-            w.writerow(['## SPATIAL NON-UNIFORMITY (HD-EMG 8x8)'])
-            w.writerow([f'# Threshold source: {result.threshold_source}'])
-            w.writerow([f'# Mean CV: {float(result.cv.mean()):.6f}'])
-            w.writerow([f'# Mean entropy (bits): {float(result.entropy.mean()):.6f}'])
-            w.writerow([f'# Mean activation fraction: {float(result.activation_fraction.mean()):.6f}'])
-            w.writerow(['time_s', 'cv', 'entropy_bits', 'activation_fraction'])
-            for t, c, e, a in zip(result.times, result.cv, result.entropy, result.activation_fraction):
-                w.writerow([round(float(t) - base_time, 6),
-                            round(float(c), 6),
-                            round(float(e), 6),
-                            round(float(a), 6)])
-            w.writerow([])
+        if 'bilateral' in self._feature_store:
+            meta = self._feature_store['bilateral']['meta']
+            _, result = self._feature_store['bilateral']['results'][0]
+            w.writerow([
+                f'# Bilateral: file1={meta.get("file1", "")}/Ch{meta.get("ch1_idx", 0) + 1} '
+                f'vs file2={meta.get("file2", "")}/Ch{meta.get("ch2_idx", 0) + 1}, '
+                f'overlap={result.overlap_duration:.3f}s, '
+                f'mean_SI={result.mean_si:+.6f}, std_SI={result.std_si:.6f}, '
+                f'max_asym={result.max_asymmetry:.6f}, '
+                f'RMS1={result.rms_file1:.8f}, RMS2={result.rms_file2:.8f}'
+            ])
 
-        elif self._last_feature_type == 'centroid':
-            _, result = self._last_feature_results[0]
+        if 'fatigue' in self._feature_store:
+            for ch_idx, result in self._feature_store['fatigue']['results']:
+                rms_onset = (
+                    f'{result.time_to_rms_fatigue[0] - base_time:.3f}s'
+                    if result.time_to_rms_fatigue is not None and len(result.time_to_rms_fatigue) > 0
+                    else 'not detected'
+                )
+                mf_onset = (
+                    f'{result.time_to_mf_fatigue[0] - base_time:.3f}s'
+                    if result.time_to_mf_fatigue is not None and len(result.time_to_mf_fatigue) > 0
+                    else 'not detected'
+                )
+                w.writerow([
+                    f'# Fatigue Ch{ch_idx + 1}: baseline_rms={result.baseline_rms:.8f}, '
+                    f'rms_onset={rms_onset}, mf_onset={mf_onset}'
+                ])
+
+        if 'spatial' in self._feature_store:
+            _, result = self._feature_store['spatial']['results'][0]
+            w.writerow([
+                f'# Spatial: threshold_source={result.threshold_source}, '
+                f'mean_cv={float(result.cv.mean()):.6f}, '
+                f'mean_entropy={float(result.entropy.mean()):.6f} bits, '
+                f'mean_activation_frac={float(result.activation_fraction.mean()):.6f}'
+            ])
+
+        if 'centroid' in self._feature_store:
+            _, result = self._feature_store['centroid']['results'][0]
             cx0, cy0 = result.initial_centroid
-            w.writerow(['## CENTROID SHIFT ANALYSIS (HD-EMG 8x8)'])
-            w.writerow([f'# Initial centroid: col={cx0:.4f}, row={cy0:.4f}'])
-            w.writerow([f'# Total displacement: {result.total_shift:.6f} electrode-units'])
-            w.writerow([f'# Mean drift rate: {result.mean_drift_rate:.6f} electrode-units/s'])
-            w.writerow(['time_s', 'centroid_col', 'centroid_row', 'displacement_electrode_units'])
-            for t, cx, cy, d in zip(result.times, result.centroid_x, result.centroid_y, result.displacement):
-                w.writerow([round(float(t) - base_time, 6),
-                            round(float(cx), 6),
-                            round(float(cy), 6),
-                            round(float(d), 6)])
-            w.writerow([])
+            w.writerow([
+                f'# Centroid: initial=({cx0:.4f},{cy0:.4f}), '
+                f'total_shift={result.total_shift:.6f} electrode-units, '
+                f'mean_drift={result.mean_drift_rate:.6f} electrode-units/s'
+            ])
+
+        w.writerow([])
+
+    def _build_export_table(self):
+        """Build the columnar export table.
+
+        Returns (headers, rows) where each row is padded with '' for shorter series.
+        Column order: signal (shared time + per-channel EMG), then one group per
+        feature type in the order: tkeo, burst, bilateral, fatigue, spatial, centroid.
+        """
+        ts = self.csv_loader.timestamps
+        base_time = ts[0]
+        headers = []
+        columns = []  # parallel list of lists; each inner list is one column's values
+
+        # --- Signal columns ---
+        selected = self.track_manager.get_selected_channels() if self.track_manager else []
+        if selected:
+            headers.append('time_s')
+            columns.append([round(float(t), 6) for t in ts])
+            for ch_idx in selected:
+                ch_name = self.csv_loader.channel_names[ch_idx]
+                processed = self.track_manager.track.data[ch_idx, :]
+                headers.append(f'{ch_name}_EMG')
+                columns.append([round(float(v), 8) for v in processed])
+
+        # --- TKEO columns ---
+        if 'tkeo' in self._feature_store:
+            for ch_idx, result in self._feature_store['tkeo']['results']:
+                env_base = result.timestamps[0]
+                headers += [
+                    f'TKEO_Ch{ch_idx + 1}_env_time_s',
+                    f'TKEO_Ch{ch_idx + 1}_envelope',
+                    f'TKEO_Ch{ch_idx + 1}_onset_num',
+                    f'TKEO_Ch{ch_idx + 1}_onset_time_s',
+                ]
+                columns.append([round(float(t) - env_base, 6) for t in result.timestamps])
+                columns.append([round(float(v), 10) for v in result.tkeo_envelope])
+                columns.append(list(range(1, len(result.onset_times) + 1)))
+                columns.append([round(float(t) - base_time, 6) for t in result.onset_times])
+
+        # --- Burst columns ---
+        if 'burst' in self._feature_store:
+            for ch_idx, result in self._feature_store['burst']['results']:
+                headers += [
+                    f'Burst_Ch{ch_idx + 1}_num',
+                    f'Burst_Ch{ch_idx + 1}_duration_s',
+                ]
+                columns.append(list(range(1, len(result.burst_durations) + 1)))
+                columns.append([round(float(d), 6) for d in result.burst_durations])
+
+        # --- Bilateral columns ---
+        if 'bilateral' in self._feature_store:
+            _, result = self._feature_store['bilateral']['results'][0]
+            si_base = result.timestamps[0]
+            headers += ['Bilateral_time_s', 'Bilateral_SI']
+            columns.append([round(float(t) - si_base, 6) for t in result.timestamps])
+            columns.append([round(float(v), 8) for v in result.symmetry_index])
+
+        # --- Fatigue columns ---
+        if 'fatigue' in self._feature_store:
+            for ch_idx, result in self._feature_store['fatigue']['results']:
+                headers += [
+                    f'Fatigue_Ch{ch_idx + 1}_time_s',
+                    f'Fatigue_Ch{ch_idx + 1}_RMS',
+                    f'Fatigue_Ch{ch_idx + 1}_MF_Hz',
+                ]
+                columns.append([round(float(t) - base_time, 6) for t in result.rms_times])
+                columns.append([round(float(r), 8) for r in result.rms_values])
+                columns.append([round(float(m), 4) for m in result.mf_values])
+
+        # --- Spatial columns ---
+        if 'spatial' in self._feature_store:
+            _, result = self._feature_store['spatial']['results'][0]
+            headers += [
+                'Spatial_time_s', 'Spatial_CV',
+                'Spatial_entropy_bits', 'Spatial_activation_frac',
+            ]
+            columns.append([round(float(t) - base_time, 6) for t in result.times])
+            columns.append([round(float(c), 6) for c in result.cv])
+            columns.append([round(float(e), 6) for e in result.entropy])
+            columns.append([round(float(a), 6) for a in result.activation_fraction])
+
+        # --- Centroid columns ---
+        if 'centroid' in self._feature_store:
+            _, result = self._feature_store['centroid']['results'][0]
+            headers += [
+                'Centroid_time_s', 'Centroid_col',
+                'Centroid_row', 'Centroid_disp',
+            ]
+            columns.append([round(float(t) - base_time, 6) for t in result.times])
+            columns.append([round(float(x), 6) for x in result.centroid_x])
+            columns.append([round(float(y), 6) for y in result.centroid_y])
+            columns.append([round(float(d), 6) for d in result.displacement])
+
+        if not columns:
+            return headers, []
+
+        max_rows = max(len(col) for col in columns)
+        rows = []
+        for i in range(max_rows):
+            rows.append([col[i] if i < len(col) else '' for col in columns])
+
+        return headers, rows
 
     def closeEvent(self, event):
         """Handle window close event."""

@@ -12,33 +12,31 @@ class SelectionWindow(QtWidgets.QWidget):
         super().__init__()
         self.setWindowTitle("OTB-Python-App - Mode Selection")
         self.setGeometry(300, 300, 400, 300)
-        
+
         layout = QtWidgets.QVBoxLayout(self)
-        
+
         # Title
         title = QtWidgets.QLabel("Select Mode")
         title.setStyleSheet("font-size: 24px; font-weight: bold; margin: 20px;")
         title.setAlignment(QtCore.Qt.AlignCenter)
         layout.addWidget(title)
-        
+
         # Buttons
         self.live_data_button = QtWidgets.QPushButton("Live Data Viewing")
         self.live_data_button.setMinimumHeight(60)
         self.live_data_button.setStyleSheet("font-size: 16px;")
-        
+
         self.data_analysis_button = QtWidgets.QPushButton("Data Analysis")
         self.data_analysis_button.setMinimumHeight(60)
         self.data_analysis_button.setStyleSheet("font-size: 16px;")
-        
+
         layout.addWidget(self.live_data_button)
         layout.addWidget(self.data_analysis_button)
         layout.addStretch()
-    
+
     def closeEvent(self, event):
         """Handle window close event - ensure session data is saved."""
-        # If live_data_window exists, trigger its save functionality
         try:
-            # Find the live data window and save its session data
             for widget in QtWidgets.QApplication.allWidgets():
                 if hasattr(widget, 'save_session_data') and hasattr(widget, 'is_calibrated'):
                     print("[SESSION] Saving session data from selection window...")
@@ -46,8 +44,9 @@ class SelectionWindow(QtWidgets.QWidget):
                     break
         except Exception as e:
             print(f"[SESSION] Error saving session data from selection window: {e}")
-        
+
         event.accept()
+
 
 
 def main():
@@ -60,139 +59,106 @@ def main():
     # Create windows
     selection_window = SelectionWindow()
     data_analysis_window = DataAnalysisWindow()
-    live_data_window = SoundtrackWindow(device)  # Renamed for clarity
-    
+    live_data_window = SoundtrackWindow(device)
+
     # Show selection window first
     selection_window.show()
+
+    # Connect to device handler — owns all TCP setup and receiver init
+    def handle_connect():
+        try:
+            if (live_data_window.receiver_thread is not None and
+                    live_data_window.receiver_thread.isRunning()):
+                live_data_window.update_status("Already connected.")
+                return
+
+            print("=" * 60)
+            print("Sessantaquattro+ Python Receiver")
+            print("=" * 60)
+
+            command = device.create_command(FSAMP=2, NCH=3, MODE=0,
+                                            HRES=0, HPF=1, EXTEN=0,
+                                            TRIG=0, REC=0, GO=1)
+
+            print("\nStarting TCP server...")
+            device.start_server()
+
+            print("\nSending start command...")
+            device.send_command(command)
+
+            print("\nInitializing receiver...")
+            print("=" * 60)
+
+            live_data_window.set_client_socket(device.client_socket)
+            if live_data_window.receiver_thread is None:
+                live_data_window.initialize_receiver()
+            else:
+                live_data_window.reinitialize_receiver()
+
+            live_data_window.update_status("Connected. Ready to stream.")
+
+        except Exception as e:
+            QtWidgets.QMessageBox.critical(None, "Connection Error", str(e))
 
     # Toggle streaming handler
     def handle_stream_toggle():
         try:
-            needs_init = live_data_window.receiver_thread is None
-            needs_reinit = (
-                live_data_window.receiver_thread is not None and
-                not live_data_window.receiver_thread.isRunning()
-            )
+            is_streaming = (live_data_window.streaming_controller is not None and
+                            live_data_window.streaming_controller.is_streaming)
+            # device.client_socket is None after stop_server() — reliable indicator
+            # that we need to reconnect (first run or after session fully torn down).
+            socket_ready = device.client_socket is not None
 
-            if needs_init or needs_reinit:
-                print("=" * 60)
-                print("Sessantaquattro+ Python Receiver")
-                print("=" * 60)
-
-                command = device.create_command(FSAMP=2, NCH=3, MODE=0,
-                                               HRES=0, HPF=1, EXTEN=0,
-                                               TRIG=0, REC=0, GO=1)
-
-                print("\nStarting TCP server...")
-                device.start_server()
-
-                print("\nSending start command...")
-                device.send_command(command)
-
-                print("\nInitializing visualization...")
-                print("=" * 60)
-
-                live_data_window.set_client_socket(device.client_socket)
-                if needs_init:
-                    live_data_window.initialize_receiver()
-                else:
-                    live_data_window.reinitialize_receiver()
-
-            live_data_window.toggle_streaming()
-
+            if is_streaming:
+                live_data_window.toggle_streaming()
+            elif socket_ready:
+                # Socket open, receiver initialized — just start streaming
+                live_data_window.toggle_streaming()
+            else:
+                # No socket: first connect or after full disconnect — reconnect then stream
+                handle_connect()
+                if live_data_window.receiver_thread is not None:
+                    live_data_window.toggle_streaming()
         except Exception as e:
-            QtWidgets.QMessageBox.critical(None, "Connection Error", str(e))
-    
+            QtWidgets.QMessageBox.critical(None, "Error", str(e))
+
     # Toggle recording handler
     def handle_record_toggle():
         try:
-            needs_init = live_data_window.receiver_thread is None
-            needs_reinit = (
-                live_data_window.receiver_thread is not None and
-                not live_data_window.receiver_thread.isRunning()
-            )
-
-            if needs_init or needs_reinit:
-                print("=" * 60)
-                print("Sessantaquattro+ Python Receiver")
-                print("=" * 60)
-
-                command = device.create_command(FSAMP=2, NCH=3, MODE=0,
-                                               HRES=0, HPF=1, EXTEN=0,
-                                               TRIG=0, REC=0, GO=1)
-
-                print("\nStarting TCP server...")
-                device.start_server()
-
-                print("\nSending start command...")
-                device.send_command(command)
-
-                print("\nInitializing visualization...")
-                print("=" * 60)
-
-                live_data_window.set_client_socket(device.client_socket)
-                if needs_init:
-                    live_data_window.initialize_receiver()
-                else:
-                    live_data_window.reinitialize_receiver()
-
+            if live_data_window.receiver_thread is None:
+                QtWidgets.QMessageBox.warning(None, "Not Connected",
+                    "Please click 'Connect to Device' first.")
+                return
             live_data_window.toggle_recording()
-
         except Exception as e:
-            QtWidgets.QMessageBox.critical(None, "Connection Error", str(e))
-    
+            QtWidgets.QMessageBox.critical(None, "Error", str(e))
+
     # Calibration handler
     def handle_calibration():
         try:
-            needs_init = live_data_window.receiver_thread is None
-            needs_reinit = (
-                live_data_window.receiver_thread is not None and
-                not live_data_window.receiver_thread.isRunning()
-            )
-
-            if needs_init or needs_reinit:
-                print("=" * 60)
-                print("Sessantaquattro+ Python Receiver")
-                print("=" * 60)
-
-                command = device.create_command(FSAMP=2, NCH=3, MODE=0,
-                                               HRES=0, HPF=1, EXTEN=0,
-                                               TRIG=0, REC=0, GO=1)
-
-                print("\nStarting TCP server...")
-                device.start_server()
-
-                print("\nSending start command...")
-                device.send_command(command)
-
-                print("\nInitializing visualization...")
-                print("=" * 60)
-
-                live_data_window.set_client_socket(device.client_socket)
-                if needs_init:
-                    live_data_window.initialize_receiver()
-                else:
-                    live_data_window.reinitialize_receiver()
-
+            if live_data_window.receiver_thread is None:
+                QtWidgets.QMessageBox.warning(None, "Not Connected",
+                    "Please click 'Connect to Device' first.")
+                return
             live_data_window.open_calibration_dialog()
-
         except Exception as e:
-            QtWidgets.QMessageBox.critical(None, "Connection Error", str(e))
+            QtWidgets.QMessageBox.critical(None, "Error", str(e))
 
     # Wire the live data window buttons
+    live_data_window.connect_button.clicked.connect(handle_connect)
     live_data_window.calibrate_button.clicked.connect(handle_calibration)
     live_data_window.stream_button.clicked.connect(handle_stream_toggle)
     live_data_window.record_button.clicked.connect(handle_record_toggle)
-    
+
     # Navigation handlers
     def show_live_data():
         selection_window.hide()
         live_data_window.show()
-    
+
     def show_data_analysis():
         selection_window.hide()
         data_analysis_window.show()
-    
+
     def back_to_selection_from_live():
         # Stop streaming if active
         if live_data_window.streaming_controller and live_data_window.streaming_controller.is_streaming:
@@ -202,19 +168,19 @@ def main():
             live_data_window.stop_recording()
         live_data_window.hide()
         selection_window.show()
-    
+
     def back_to_selection_from_analysis():
         data_analysis_window.hide()
         selection_window.show()
-    
+
     # Wire selection window buttons
     selection_window.live_data_button.clicked.connect(show_live_data)
     selection_window.data_analysis_button.clicked.connect(show_data_analysis)
-    
+
     # Wire back buttons
     live_data_window.back_button.clicked.connect(back_to_selection_from_live)
     data_analysis_window.back_button.clicked.connect(back_to_selection_from_analysis)
-    
+
     # Ensure session data is saved when the application exits
     def cleanup_and_exit():
         """Clean up and save session data before application exit."""
@@ -222,7 +188,7 @@ def main():
         if live_data_window:
             live_data_window.save_session_data()
         app.quit()
-    
+
     # Handle application exit
     app.aboutToQuit.connect(cleanup_and_exit)
 

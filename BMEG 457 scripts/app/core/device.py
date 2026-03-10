@@ -1,5 +1,4 @@
 import socket
-import sys
 
 from app.core.config import Config
 
@@ -110,8 +109,11 @@ class SessantaquattroPlus:
             connection_timeout = Config.CONNECTION_TIMEOUT
         # Pre-flight checks
         if not self.is_connected_to_device_network():
-            print("Please connect to the Sessantaquattroplus device's WiFi network first")
-            sys.exit(1)
+            raise RuntimeError(
+                "Not connected to the Sessantaquattro+ WiFi network.\n"
+                f"Expected network prefix: {Config.DEVICE_NETWORK_PREFIX}\n"
+                "Please connect to the device's WiFi and try again."
+            )
 
         try:
             self.server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -132,19 +134,53 @@ class SessantaquattroPlus:
                 print(f"Connection accepted from {addr}")
 
             except socket.timeout:
-                print(f"ERROR: Device did not connect within {connection_timeout} seconds")
-                print("Make sure:")
-                print("1. You're connected to the device's WiFi")
-                print("2. The device is powered on and in pairing mode")
-                print("3. No firewall is blocking the connection")
                 self.server_socket.close()
-                sys.exit(1)
+                raise RuntimeError(
+                    f"Device did not connect within {connection_timeout} seconds.\n"
+                    "Make sure:\n"
+                    "1. You're connected to the device's WiFi\n"
+                    "2. The device is powered on and in pairing mode\n"
+                    "3. No firewall is blocking the connection"
+                )
 
         except socket.error as e:
-            print(f"Server error: {e}")
             if self.server_socket:
                 self.server_socket.close()
-            sys.exit(1)
+            raise RuntimeError(f"Server error: {e}")
+
+    def get_battery_level(self):
+        """Query battery percentage. Returns 0-100 or None on error.
+
+        Per TCP protocol spec, INFO[2:0] = 010 requests battery level:
+          BYTE 0: 0x80  (bit 7 GETSET=1, all other bits 0)
+          BYTE 1: 0x02  (bits [2:0] = 010 → battery %)
+        Device replies with a single byte (0-100).
+
+        NOTE: Device does not respond to GET commands before GO=1 (pre-GO window
+        times out at all tested delays). Safe window is between sessions: after the
+        old socket is closed (device returns to searching) and before GO=1 is sent
+        on the new connection. Called by BatteryWorker in main.py.
+        """
+        try:
+            cmd = bytes([0x80, 0x02])
+            print(f"[BATTERY] Sending GET command: {cmd.hex()}")
+            self.client_socket.send(cmd)
+            self.client_socket.settimeout(5.0)
+            response = self.client_socket.recv(1)
+            print(f"[BATTERY] Raw response ({len(response)} bytes): {response.hex() if response else 'empty'}")
+            self.client_socket.settimeout(None)
+            if response:
+                level = response[0]
+                print(f"[BATTERY] Decoded battery level: {level}%")
+                return level
+            return None
+        except Exception as e:
+            print(f"Error querying battery level: {e}")
+            try:
+                self.client_socket.settimeout(None)
+            except Exception:
+                pass
+            return None
 
     def send_command(self, command):
         """Send command to start data acquisition"""
@@ -158,5 +194,7 @@ class SessantaquattroPlus:
     def stop_server(self):
         if self.client_socket:
             self.client_socket.close()
+            self.client_socket = None
         if self.server_socket:
             self.server_socket.close()
+            self.server_socket = None

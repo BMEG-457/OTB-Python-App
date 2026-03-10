@@ -93,22 +93,15 @@ class SoundtrackWindow(QtWidgets.QWidget):
         top_bar_layout.addSpacing(20)
 
         # Main control buttons
+        self.connect_button = QtWidgets.QPushButton("Connect to Device")
         self.calibrate_button = QtWidgets.QPushButton("Calibrate")
         self.stream_button = QtWidgets.QPushButton("Start Live Stream")
         self.record_button = QtWidgets.QPushButton("Start Recording")
-        
+
+        top_bar_layout.addWidget(self.connect_button)
         top_bar_layout.addWidget(self.calibrate_button)
         top_bar_layout.addWidget(self.stream_button)
         top_bar_layout.addWidget(self.record_button)
-
-        # Add separator
-        top_bar_layout.addSpacing(20)
-
-        # Pause button
-        self.pause_button = QtWidgets.QPushButton("Pause")
-        self.pause_button.setCheckable(True)
-        self.pause_button.toggled.connect(self.toggle_pause)
-        top_bar_layout.addWidget(self.pause_button)
 
         # Status label
         self.status_label = QtWidgets.QLabel("Ready")
@@ -121,6 +114,12 @@ class SoundtrackWindow(QtWidgets.QWidget):
         self.contraction_status_label = QtWidgets.QLabel("Not Calibrated")
         top_bar_layout.addWidget(self.contraction_led)
         top_bar_layout.addWidget(self.contraction_status_label)
+
+        # Battery indicator
+        top_bar_layout.addSpacing(20)
+        self.battery_label = QtWidgets.QLabel("Battery: N/A")
+        self.battery_label.setStyleSheet("font-size: 13px; font-weight: bold; color: gray;")
+        top_bar_layout.addWidget(self.battery_label)
 
         top_bar_layout.addStretch()
 
@@ -237,7 +236,6 @@ class SoundtrackWindow(QtWidgets.QWidget):
     def toggle_pause(self, checked):
         """Toggle pause state."""
         self.is_paused = checked
-        self.pause_button.setText("Resume" if checked else "Pause")
         if checked:
             self.timer.stop()
         else:
@@ -302,6 +300,21 @@ class SoundtrackWindow(QtWidgets.QWidget):
         else:
             self.contraction_led.setStyleSheet(f"color: {Config.COLOR_LED_RELAXED}; font-size: 22px;")
             self.contraction_status_label.setText("Relaxed")
+
+    def update_battery_display(self, level):
+        """Update battery percentage label with color coding."""
+        if level is None:
+            self.battery_label.setText("Battery: --")
+            self.battery_label.setStyleSheet("font-size: 13px; font-weight: bold; color: gray;")
+        else:
+            if level <= 20:
+                color = Config.COLOR_LED_CONTRACTING   # red
+            elif level <= 50:
+                color = "#FFA500"                      # orange
+            else:
+                color = Config.COLOR_LED_RELAXED       # green
+            self.battery_label.setText(f"Battery: {level}%")
+            self.battery_label.setStyleSheet(f"font-size: 13px; font-weight: bold; color: {color};")
 
     def change_group_preset(self, preset):
         """Switch the HDsEMG group average preset shown in AllTracksTab."""

@@ -39,7 +39,10 @@ class Track:
             ] else pg.mkPen(color=i, width=Config.CURVE_LINE_WIDTH)
 
             curve_name = f"Ch {i+1}" if i < Config.CHANNEL_NAMING_MAX or num_channels <= Config.CHANNEL_NAMING_MAX else None
-            self.curves.append(self.plot_widget.plot(pen=pen, name=curve_name))
+            curve = self.plot_widget.plot(pen=pen, name=curve_name)
+            curve.setDownsampling(auto=True)
+            curve.setClipToView(True)
+            self.curves.append(curve)
 
         # by default all channels are visible; use set_visible_channels to change
         self.visible_channels = list(range(self.num_channels))
@@ -59,7 +62,8 @@ class Track:
 
     def draw(self):
         for i, curve in enumerate(self.curves):
-            # draw data for channel i regardless of visibility — visibility is controlled via show()/hide()
+            if not curve.isVisible():
+                continue
             curve.setData(self.time_array, self.buffer[i, :] * self.conv_fact + (self.offset * i))
 
     def set_visible_channels(self, channels):

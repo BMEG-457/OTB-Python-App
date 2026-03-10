@@ -310,10 +310,14 @@ class SoundtrackWindow(QtWidgets.QWidget):
     def update_plot(self):
         """Main plot update loop - draws whenever timer is running."""
         if not self.is_paused:
-            self.track_manager.draw_all_tracks()
-            self.track_manager.update_group_averages()
-            self.update_heatmap()
-            self.update_features()
+            current_tab = self.tabs.currentWidget()
+            self.track_manager.draw_all_tracks(active_tab=current_tab)
+            if isinstance(current_tab, AllTracksTab):
+                self.track_manager.update_group_averages()
+            if isinstance(current_tab, HeatmapTab):
+                self.update_heatmap()
+            if isinstance(current_tab, FeaturesTab):
+                self.update_features()
 
     def toggle_streaming(self):
         """Toggle streaming on/off."""

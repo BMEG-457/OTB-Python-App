@@ -287,9 +287,12 @@ class TrackManager:
                 pass
             ch_track.draw()
 
-    def draw_all_tracks(self):
-        """Draw all tracks."""
+    def draw_all_tracks(self, active_tab=None):
+        """Draw all tracks, skipping the HDsEMG raw track when its tab is not active."""
+        from app.ui.tabs.tab_implementations import IndividualChannelsTab
         for track in self.tracks:
+            if track is self.hdsemg_track and not isinstance(active_tab, IndividualChannelsTab):
+                continue
             track.draw()
 
     def _all_containers(self):

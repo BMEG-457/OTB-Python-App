@@ -5,7 +5,9 @@
 - **Platform:** WSL2 (Ubuntu) on Windows 11
 - **Project path in WSL:** `/mnt/c/Users/Nicholas/Documents/Code/Python/BMEG_457/OTB-mobile/OTB-Python-App/mobile_app/`
 - **Symlink (no spaces):** `~/otb-mobile` → project path (required — p4a rejects paths with spaces)
-- **Build command:** `cd ~/otb-mobile && VIRTUAL_ENV=1 LEGACY_NDK=~/android-ndk-r21e buildozer android debug`
+- **Build dir (no spaces):** `/home/fettuccinifelix/.buildozer/otb-mobile` (set in `buildozer.spec`)
+- **Build command:** `cd ~/otb-mobile && VIRTUAL_ENV=1 buildozer android debug`
+- **APK output:** `~/otb-mobile/bin/otbemgapp-0.1-arm64-v8a_armeabi-v7a-debug.apk`
 
 ---
 
@@ -48,7 +50,7 @@ unzip android-ndk-r21e-linux-x86_64.zip
 | `No module named 'distutils'` (Python 3.12 removed it) | `pipx inject buildozer setuptools` |
 | `# Cython not found` | `pipx inject buildozer cython` (also `sudo apt install cython3` for system Python) |
 | `Cannot perform --user install` in pipx venv | `pipx inject buildozer appdirs colorama jinja2 ...` + set `VIRTUAL_ENV=1` |
-| `storage dir path cannot contain spaces` | Symlink project to `~/otb-mobile` (no spaces in path) |
+| `storage dir path cannot contain spaces` | Symlink project to `~/otb-mobile` + set `build_dir` in `buildozer.spec` to a Linux-native path with no spaces |
 | `LEGACY_NDK not found` / gfortran missing | Download NDK r21e; **now moot — scipy removed** |
 
 ### The `--user` flag patch (for reference)
@@ -118,18 +120,133 @@ python scripts/compute_filter_coeffs.py --fs 4000
 
 ---
 
-## Current Build State
+## Build Commands
 
-Build was in progress when this context was written. The last attempted build step was the python-for-android compile phase. With scipy/matplotlib removed, the gfortran/NDK r21e issue no longer applies. Next build should only require:
+### Full clean build
+
+```bash
+cd ~/otb-mobile
+VIRTUAL_ENV=1 buildozer android clean
+VIRTUAL_ENV=1 buildozer android debug
+```
+
+Always do a clean build after adding/removing source files or changing `buildozer.spec`.
+
+### Incremental rebuild
 
 ```bash
 cd ~/otb-mobile
 VIRTUAL_ENV=1 buildozer android debug
 ```
 
-If `.buildozer/` contains stale artifacts from previous scipy-inclusive builds, clean first:
+Buildozer re-copies source files and repackages. Faster than clean build but may use stale
+cached artifacts if directory structure changed.
+
+### buildozer.spec key settings
+
+```ini
+[app]
+source.dir = .
+source.include_exts = py,png,jpg,kv,atlas
+requirements = python3,kivy==2.3.0,numpy
+android.permissions = INTERNET, WRITE_EXTERNAL_STORAGE, READ_EXTERNAL_STORAGE
+android.api = 28
+android.minapi = 21
+android.archs = arm64-v8a, armeabi-v7a
+orientation = landscape
+
+[buildozer]
+log_level = 2
+warn_on_root = 1
+build_dir = /home/fettuccinifelix/.buildozer/otb-mobile
+```
+
+The `build_dir` line is critical: it puts all build artifacts on the native Linux filesystem,
+avoiding the spaces-in-path error from `/mnt/c/Users/Nicholas Santoso/...` and improving
+build speed vs cross-filesystem `/mnt/c/` access.
+
+---
+
+## Install & Debug on Android
+
+### ADB setup
+
+ADB in WSL cannot see USB devices. Use Windows ADB instead:
+
+1. Download [platform-tools](https://developer.android.com/tools/releases/platform-tools) and extract to `C:\platform-tools`
+2. Enable Developer Options on phone: **Settings > About Phone > tap Build Number 7 times**
+3. Enable **USB Debugging** in Developer Options
+4. Connect phone via USB, accept the debugging prompt
+
+### Install APK
+
+From PowerShell:
+
+```powershell
+cd C:\platform-tools
+.\adb devices                    # verify phone is listed
+.\adb install -r "C:\Users\Nicholas Santoso\Documents\Code\Python\BMEG-457\OTB-mobile\OTB-Python-App\mobile_app\bin\otbemgapp-0.1-arm64-v8a_armeabi-v7a-debug.apk"
+```
+
+### View crash logs
+
+```powershell
+cd C:\platform-tools
+.\adb logcat -c; .\adb logcat -s python:*
+```
+
+Run this **before** launching the app on the phone. The Python traceback will appear in the
+terminal. Common crash causes:
+
+| Error | Cause |
+|---|---|
+| `ModuleNotFoundError: No module named 'app.xxx'` | Source directory not packaged — do a clean build |
+| `ImportError` | Missing dependency in `requirements` |
+| `NameError` | Typo or missing import in Python source |
+
+### Uninstall
+
+```powershell
+.\adb uninstall org.bmeg457.otbemgapp
+```
+
+---
+
+## Emulator Mode (for testing without hardware)
+
+### Build flag
+
+Set `EMULATOR_BUILD = True` in `app/core/config.py` before building to skip the
+192.168.1.x WiFi network check. Revert to `False` for production builds.
+
+### Desktop testing
 
 ```bash
-VIRTUAL_ENV=1 buildozer android clean
-VIRTUAL_ENV=1 buildozer android debug
+# Windows CMD
+set SESSANTAQUATTRO_EMULATOR=1
+python main.py
+# Press Stream, then within 10 seconds:
+python emulator.py
 ```
+
+### Android testing
+
+1. Set `EMULATOR_BUILD = True` in `app/core/config.py`
+2. Clean build and install:
+   ```bash
+   cd ~/otb-mobile
+   VIRTUAL_ENV=1 buildozer android clean
+   VIRTUAL_ENV=1 buildozer android debug
+   ```
+   ```powershell
+   cd C:\platform-tools
+   .\adb install -r "C:\Users\Nicholas Santoso\Documents\Code\Python\BMEG-457\OTB-mobile\OTB-Python-App\mobile_app\bin\otbemgapp-0.1-arm64-v8a_armeabi-v7a-debug.apk"
+   ```
+3. Connect phone and PC to the same WiFi network
+4. Find phone's IP: **Settings > WiFi > tap network > IP address**
+5. Open app on phone > **Live Data** > press **Stream**
+6. Within 10 seconds, run on PC:
+   ```bash
+   python emulator.py --host <phone-ip>
+   ```
+7. Emulator connects, phone displays live streaming data

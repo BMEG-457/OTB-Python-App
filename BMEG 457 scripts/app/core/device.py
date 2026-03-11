@@ -4,9 +4,10 @@ from app.core.config import Config
 
 
 class SessantaquattroPlus:
-    def __init__(self, host=None, port=None):
+    def __init__(self, host=None, port=None, emulator_mode=False):
         self.host = host if host is not None else Config.DEVICE_HOST
         self.port = port if port is not None else Config.DEVICE_PORT
+        self.emulator_mode = emulator_mode
         self.nchannels = 72
         self.frequency = 2000
         self.server_socket = None
@@ -84,6 +85,9 @@ class SessantaquattroPlus:
 
     def is_connected_to_device_network(self, device_network_prefix=None):
         """Check if connected to the device's WiFi network"""
+        if self.emulator_mode:
+            print("Emulator mode — skipping network check")
+            return True
         if device_network_prefix is None:
             device_network_prefix = Config.DEVICE_NETWORK_PREFIX
         try:

@@ -7,6 +7,14 @@ FILTER COEFFICIENTS section below whenever you change the sample rate or cutoffs
 """
 
 # ---------------------------------------------------------------------------
+# Build flags
+# ---------------------------------------------------------------------------
+# Set EMULATOR_BUILD = True before running `buildozer android debug` to produce
+# an APK that skips the 192.168.1.x WiFi check and works with emulator.py.
+# Revert to False for production APKs that connect to the real hardware.
+EMULATOR_BUILD = True
+
+# ---------------------------------------------------------------------------
 # Device
 # ---------------------------------------------------------------------------
 DEVICE_SAMPLE_RATE = 2000   # Hz — must match DEVICE_FSAMP / DEVICE_MODE below

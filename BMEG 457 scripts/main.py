@@ -1,3 +1,5 @@
+import os
+
 from PyQt5 import QtWidgets, QtCore
 import pyqtgraph as pg
 
@@ -54,7 +56,7 @@ def main():
     pg.setConfigOptions(antialias=True)
 
     # Create device object, but DO NOT connect yet
-    device = SessantaquattroPlus()
+    device = SessantaquattroPlus(emulator_mode=os.getenv("SESSANTAQUATTRO_EMULATOR") == "1")
 
     # Create windows
     selection_window = SelectionWindow()

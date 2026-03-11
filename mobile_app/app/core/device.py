@@ -2,9 +2,10 @@ import socket
 
 
 class SessantaquattroPlus:
-    def __init__(self, host="0.0.0.0", port=45454):
+    def __init__(self, host="0.0.0.0", port=45454, emulator_mode=False):
         self.host = host
         self.port = port
+        self.emulator_mode = emulator_mode
         self.nchannels = 72
         self.frequency = 2000
         self.server_socket = None
@@ -49,6 +50,9 @@ class SessantaquattroPlus:
 
     def is_connected_to_device_network(self, device_network_prefix="192.168.1"):
         """Check if connected to the device's WiFi network."""
+        if self.emulator_mode:
+            print("Emulator mode — skipping network check")
+            return True
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
             s.settimeout(2)

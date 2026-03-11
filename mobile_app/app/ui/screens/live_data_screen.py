@@ -350,7 +350,8 @@ class LiveDataScreen(Screen):
                 self.device.send_command(command)
                 Clock.schedule_once(self._on_connected, 0)
             except Exception as e:
-                Clock.schedule_once(lambda dt: self._on_connect_error(str(e)), 0)
+                err_msg = str(e)
+                Clock.schedule_once(lambda dt: self._on_connect_error(err_msg), 0)
 
         threading.Thread(target=connect, daemon=True).start()
 
@@ -454,12 +455,17 @@ class LiveDataScreen(Screen):
         if data.shape[0] < 64:
             return
         # Accumulate samples into rolling buffer, compute per-channel RMS
-        n = data.shape[1]
+        n  = data.shape[1]
         hd = data[:64]  # (64, samples)
-        for i in range(n):
-            idx = self._heatmap_buf_idx % 100
-            self._heatmap_buffer[:, idx] = hd[:, i]
-            self._heatmap_buf_idx += 1
+        # Vectorised circular-buffer write — replaces O(n) Python for-loop
+        start = self._heatmap_buf_idx % 100
+        if start + n <= 100:
+            self._heatmap_buffer[:, start:start + n] = hd
+        else:
+            split = 100 - start
+            self._heatmap_buffer[:, start:]    = hd[:, :split]
+            self._heatmap_buffer[:, :n - split] = hd[:, split:]
+        self._heatmap_buf_idx += n
 
         rms = np.sqrt(np.mean(self._heatmap_buffer ** 2, axis=1))  # (64,)
 

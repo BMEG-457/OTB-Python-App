@@ -42,3 +42,4 @@ version = 0.1
 [buildozer]
 log_level = 2
 warn_on_root = 1
+build_dir = /home/fettuccinifelix/.buildozer/otb-mobile

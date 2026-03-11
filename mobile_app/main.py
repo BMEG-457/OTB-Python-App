@@ -1,5 +1,7 @@
 """Kivy entry point for the OTB EMG Android app."""
 
+import os
+
 from kivy.app import App
 from kivy.uix.screenmanager import ScreenManager
 from kivy.uix.popup import Popup
@@ -9,6 +11,7 @@ from kivy.uix.label import Label
 from kivy.metrics import sp
 from kivy.clock import Clock
 
+from app.core.config import EMULATOR_BUILD
 from app.core.device import SessantaquattroPlus
 from app.ui.screens.selection_screen import SelectionScreen
 from app.ui.screens.live_data_screen import LiveDataScreen
@@ -25,7 +28,8 @@ def _is_android():
 
 class OTBApp(App):
     def build(self):
-        self.device = SessantaquattroPlus()
+        emulator = EMULATOR_BUILD or os.getenv("SESSANTAQUATTRO_EMULATOR") == "1"
+        self.device = SessantaquattroPlus(emulator_mode=emulator)
 
         sm = ScreenManager()
         sm.add_widget(SelectionScreen(name='selection'))

@@ -17,6 +17,7 @@ class Config:
     # Device
     _dev = _cfg.get("device", {})
     DEVICE_HOST             = _dev.get("host", "0.0.0.0")
+    DEVICE_GATEWAY_IP       = _dev.get("gateway_ip", "192.168.1.1")
     DEVICE_PORT             = _dev.get("port", 45454)
     DEVICE_NETWORK_PREFIX   = _dev.get("network_prefix", "192.168.1")
     CONNECTION_TIMEOUT      = _dev.get("connection_timeout_s", 10)

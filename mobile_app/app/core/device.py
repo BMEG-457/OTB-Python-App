@@ -1,12 +1,17 @@
+import re
 import socket
+import urllib.request
+
+from app.core import config as CFG
 
 
 class SessantaquattroPlus:
-    def __init__(self, host="0.0.0.0", port=45454):
-        self.host = host
-        self.port = port
-        self.nchannels = 72
-        self.frequency = 2000
+    def __init__(self, host=None, port=None, emulator_mode=False):
+        self.host = host if host is not None else CFG.DEVICE_HOST
+        self.port = port if port is not None else CFG.DEVICE_PORT
+        self.emulator_mode = emulator_mode
+        self.nchannels = CFG.DEVICE_CHANNELS
+        self.frequency = CFG.DEVICE_SAMPLE_RATE
         self.server_socket = None
         self.client_socket = None
 
@@ -49,9 +54,12 @@ class SessantaquattroPlus:
 
     def is_connected_to_device_network(self, device_network_prefix="192.168.1"):
         """Check if connected to the device's WiFi network."""
+        if self.emulator_mode:
+            print("Emulator mode — skipping network check")
+            return True
         try:
             s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            s.settimeout(2)
+            s.settimeout(CFG.NETWORK_CHECK_TIMEOUT)
             s.connect(("8.8.8.8", 80))
             local_ip = s.getsockname()[0]
             s.close()
@@ -99,6 +107,24 @@ class SessantaquattroPlus:
             if self.server_socket:
                 self.server_socket.close()
             raise OSError(f"Server socket error: {e}") from e
+
+    def get_battery_level(self):
+        """Query battery via the device's HTTP status page. Returns 0-100 or None."""
+        url = f"http://{CFG.DEVICE_GATEWAY_IP}/"
+        try:
+            req = urllib.request.Request(url, method='GET')
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                html = resp.read().decode('utf-8', errors='replace')
+            match = re.search(r'Battery\s*Level:\s*</td>\s*<td>\s*(\d+)%', html)
+            if match:
+                level = int(match.group(1))
+                print(f"[BATTERY] HTTP query: {level}%")
+                return level
+            print("[BATTERY] Could not parse battery level from HTML")
+            return None
+        except Exception as e:
+            print(f"[BATTERY] HTTP query failed: {e}")
+            return None
 
     def send_command(self, command):
         """Send command to start data acquisition."""

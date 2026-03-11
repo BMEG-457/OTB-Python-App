@@ -86,7 +86,7 @@ class CalibrationPopup(Popup):
 
         if baseline_rms is None or mvc_rms is None:
             self.status_label.text = 'Calibration failed — no data received.'
-            Clock.schedule_once(lambda dt: self.dismiss(), 2)
+            Clock.schedule_once(lambda dt: self.dismiss(), CFG.CALIBRATION_DISMISS_DELAY)
             return
 
         # Threshold between baseline and MVC (fraction set in config)
@@ -114,7 +114,7 @@ class CalibrationPopup(Popup):
     def _schedule_progress(self, duration, next_fn):
         """Animate the progress bar over duration seconds, then call next_fn."""
         start = [0.0]
-        tick = 1 / 30  # 30fps progress updates
+        tick = 1.0 / CFG.CALIBRATION_PROGRESS_FPS
 
         if self._progress_event is not None:
             self._progress_event.cancel()

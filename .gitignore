@@ -140,4 +140,7 @@ htmlcov/
 previous_session.csv
 data/
 !BMEG 457 scripts/app/data/
+!mobile_app/data/
+!mobile_app_team/data/
+bin/
 ## recordings/

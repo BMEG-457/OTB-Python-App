@@ -14,6 +14,7 @@ from kivy.uix.popup import Popup
 from kivy.clock import Clock
 from kivy.metrics import sp
 
+from app.core import config as CFG
 from app.processing.features import (
     compute_tkeo_activation_timing,
     compute_burst_duration,
@@ -52,11 +53,12 @@ def _load_csv(filepath):
 
 def _estimated_fs(timestamps):
     """Estimate sample rate from timestamps."""
+    fallback = float(CFG.DEVICE_SAMPLE_RATE)
     if len(timestamps) < 2:
-        return 2000.0
+        return fallback
     dt = np.diff(timestamps)
     dt = dt[dt > 0]
-    return float(1.0 / np.median(dt)) if len(dt) > 0 else 2000.0
+    return float(1.0 / np.median(dt)) if len(dt) > 0 else fallback
 
 
 class DataAnalysisScreen(Screen):
@@ -78,6 +80,8 @@ class DataAnalysisScreen(Screen):
         self._ts2 = None
         self._data2 = None
 
+        self._pending_bilateral = False
+
         self._build_ui()
 
     # ------------------------------------------------------------------
@@ -98,19 +102,15 @@ class DataAnalysisScreen(Screen):
         # File load bar
         file_bar = BoxLayout(orientation='horizontal', size_hint=(1, 0.08), padding=4, spacing=4)
 
-        self.file1_label = Label(text='No file loaded', size_hint=(0.35, 1), font_size=sp(14),
-                                 color=(0.7, 0.7, 0.7, 1))
-        btn_load1 = Button(text='Load File 1', size_hint=(0.15, 1), font_size=sp(15))
+        btn_load1 = Button(text='Load File 1', size_hint=(0.2, 1), font_size=sp(15))
         btn_load1.bind(on_press=lambda x: self._show_file_chooser(1))
-
-        self.file2_label = Label(text='No file 2 (for bilateral symmetry)',
-                                 size_hint=(0.35, 1), font_size=sp(14), color=(0.7, 0.7, 0.7, 1))
-        btn_load2 = Button(text='Load File 2', size_hint=(0.15, 1), font_size=sp(15))
-        btn_load2.bind(on_press=lambda x: self._show_file_chooser(2))
+        self.file1_label = Label(text='No file loaded', size_hint=(0.4, 1), font_size=sp(14),
+                                 color=(0.7, 0.7, 0.7, 1))
+        self.file2_label = Label(text='File 2: not loaded (bilateral symmetry)',
+                                 size_hint=(0.4, 1), font_size=sp(14), color=(0.7, 0.7, 0.7, 1))
 
         file_bar.add_widget(btn_load1)
         file_bar.add_widget(self.file1_label)
-        file_bar.add_widget(btn_load2)
         file_bar.add_widget(self.file2_label)
         root.add_widget(file_bar)
 
@@ -138,10 +138,10 @@ class DataAnalysisScreen(Screen):
             halign='left',
             valign='top',
             size_hint_y=None,
-            text_size=(None, None),
         )
         self.results_label.bind(
-            texture_size=lambda inst, val: setattr(inst, 'size', val)
+            texture_size=lambda inst, val: setattr(inst, 'size', val),
+            width=lambda inst, w: setattr(inst, 'text_size', (w, None)),
         )
         scroll.add_widget(self.results_label)
         root.add_widget(scroll)
@@ -165,7 +165,7 @@ class DataAnalysisScreen(Screen):
         # user_data_dir (private internal storage) is always accessible and is
         # where recordings fall back to if external storage permission is not
         # yet in effect (requires app restart after grant).
-        package = 'org.bmeg457.otbemgapp'
+        package = CFG.ANDROID_PACKAGE_NAME
 
         # Try Android API first — may succeed where direct POSIX access is blocked.
         _jnius_ext = None
@@ -326,9 +326,13 @@ class DataAnalysisScreen(Screen):
             self.file1_label.text = f'{name} ({data.shape[0]} ch, {data.shape[1]} samples)'
         else:
             self._file2, self._ts2, self._data2 = path, ts, data
-            self.file2_label.text = f'{name} ({data.shape[0]} ch, {data.shape[1]} samples)'
+            self.file2_label.text = f'File 2: {name} ({data.shape[0]} ch, {data.shape[1]} samples)'
 
         self._set_results(f'Loaded {name} into slot {slot}.')
+
+        if slot == 2 and self._pending_bilateral:
+            self._pending_bilateral = False
+            self._do_run_bilateral()
 
     # ------------------------------------------------------------------
     # Analysis runners
@@ -424,9 +428,16 @@ class DataAnalysisScreen(Screen):
         threading.Thread(target=run, daemon=True).start()
 
     def _run_bilateral(self, instance):
-        if self._data1 is None or self._data2 is None:
-            self._set_results('Load both File 1 and File 2 for bilateral symmetry.')
+        if self._data1 is None:
+            self._set_results('Load File 1 first.')
             return
+        if self._data2 is None:
+            self._pending_bilateral = True
+            self._show_file_chooser(2)
+            return
+        self._do_run_bilateral()
+
+    def _do_run_bilateral(self):
         self._set_results('Running bilateral symmetry analysis...')
 
         def run():

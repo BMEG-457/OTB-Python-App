@@ -3,6 +3,7 @@ from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
 from kivy.uix.label import Label
 from kivy.metrics import sp
+from app.core import config as CFG
 
 
 class SelectionScreen(Screen):
@@ -30,7 +31,7 @@ class SelectionScreen(Screen):
             text='Live Data Viewing',
             font_size=sp(20),
             size_hint=(1, 0.25),
-            background_color=(0.1, 0.6, 0.4, 1),
+            background_color=CFG.BTN_LIVE_MODE,
         )
         btn_live.bind(on_press=self._go_live)
         layout.add_widget(btn_live)
@@ -39,7 +40,7 @@ class SelectionScreen(Screen):
             text='Data Analysis',
             font_size=sp(20),
             size_hint=(1, 0.25),
-            background_color=(0.2, 0.4, 0.7, 1),
+            background_color=CFG.BTN_ANALYSIS_MODE,
         )
         btn_analysis.bind(on_press=self._go_analysis)
         layout.add_widget(btn_analysis)

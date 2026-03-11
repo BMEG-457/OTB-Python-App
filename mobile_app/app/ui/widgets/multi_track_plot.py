@@ -3,16 +3,24 @@
 import numpy as np
 from kivy.uix.widget import Widget
 from kivy.graphics import Color, Line, Rectangle
-from kivy.metrics import sp
 from app.core import config as CFG
+
+# Number of points rendered per track after downsampling
+_N_PTS = CFG.PLOT_DISPLAY_SAMPLES // CFG.PLOT_DOWNSAMPLE
 
 
 class MultiTrackPlotWidget(Widget):
     """Vertically stacked rolling plots — one track per aggregated signal.
 
-    Each track has an independent rolling buffer of length PLOT_DISPLAY_SAMPLES.
+    Each track has an independent circular buffer of length PLOT_DISPLAY_SAMPLES.
     Call update_track(idx, samples) to feed new data, then render() once per
     60fps tick to redraw all tracks.
+
+    Performance notes vs original:
+    - Per-track circular buffer with write-pointer replaces np.roll (no allocation)
+    - xs shared and cached on size change (not recomputed each frame)
+    - Per-track pts array pre-allocated; only ys filled each frame
+    - .tolist() replaces list() for ~5x faster numpy→Python list conversion
 
     Args:
         track_labels: list of str — one label per track (determines track count).
@@ -22,14 +30,31 @@ class MultiTrackPlotWidget(Widget):
 
     def __init__(self, track_labels, track_colors=None, **kwargs):
         super().__init__(**kwargs)
-        self._n = len(track_labels)
+        self._n      = len(track_labels)
         self._labels = track_labels
-        self._buffers = [np.zeros(CFG.PLOT_DISPLAY_SAMPLES) for _ in range(self._n)]
+        cap          = CFG.PLOT_DISPLAY_SAMPLES
 
-        palette = track_colors or CFG.MULTI_TRACK_COLORS
-        self._colors = [palette[i % len(palette)] for i in range(self._n)]
+        # Per-track circular buffers and write-pointers (no np.roll on update)
+        self._buffers    = [np.zeros(cap) for _ in range(self._n)]
+        self._buf_writes = [0] * self._n
 
-        # Pre-allocate canvas instructions: one background rect + one line per track
+        # Pre-allocated linearisation scratch buffers (one per track)
+        self._render_bufs = [np.empty(cap) for _ in range(self._n)]
+
+        # Pre-allocated interleaved point arrays [x0,y0, x1,y1, ...] per track
+        self._pts_arrays = [np.empty(2 * _N_PTS) for _ in range(self._n)]
+
+        # Peak-hold y-axis range per track — only expands, never shrinks
+        self._y_mins = [0.0] * self._n
+        self._y_maxs = [0.0] * self._n
+
+        # Shared xs — computed once on size change, stored in pts[0::2]
+        self._xs_valid = False
+
+        palette        = track_colors or CFG.MULTI_TRACK_COLORS
+        self._colors   = [palette[i % len(palette)] for i in range(self._n)]
+
+        # Pre-allocate canvas instructions: background rect + line per track
         self._rects = []
         self._lines = []
         with self.canvas:
@@ -42,64 +67,95 @@ class MultiTrackPlotWidget(Widget):
         self.bind(pos=self._update_layout, size=self._update_layout)
 
     # ------------------------------------------------------------------
+    # Layout
+    # ------------------------------------------------------------------
+
+    def _update_layout(self, *args):
+        if self.width == 0:
+            return
+        # Recompute shared xs and cache into each track's pts[0::2]
+        xs = self.x + np.arange(_N_PTS) * (self.width / max(_N_PTS - 1, 1))
+        for pts in self._pts_arrays:
+            pts[0::2] = xs
+        self._xs_valid = True
+        self.render()
+
+    # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
 
     def update_track(self, idx, samples):
-        """Roll new samples into one track buffer.
+        """Write new samples into one track's circular buffer.
 
         Args:
-            idx: track index (0-based).
+            idx:     track index (0-based).
             samples: 1-D np.ndarray of new samples.
         """
         if idx < 0 or idx >= self._n:
             return
-        n = len(samples)
-        buf = self._buffers[idx]
-        if n >= CFG.PLOT_DISPLAY_SAMPLES:
-            self._buffers[idx] = samples[-CFG.PLOT_DISPLAY_SAMPLES:]
+
+        new = samples
+        n   = len(new)
+        cap = CFG.PLOT_DISPLAY_SAMPLES
+        w   = self._buf_writes[idx]
+        end = w + n
+
+        if n >= cap:
+            self._buffers[idx][:] = new[-cap:]
+            self._buf_writes[idx]  = 0
+        elif end <= cap:
+            self._buffers[idx][w:end] = new
+            self._buf_writes[idx]     = end % cap
         else:
-            self._buffers[idx] = np.roll(buf, -n)
-            self._buffers[idx][-n:] = samples
+            split = cap - w
+            self._buffers[idx][w:]     = new[:split]
+            self._buffers[idx][:n - split] = new[split:]
+            self._buf_writes[idx]          = n - split
+
+    def reset_scale(self):
+        """Reset peak-hold y-axis range for all tracks (call on stream start)."""
+        for i in range(self._n):
+            self._y_mins[i] = 0.0
+            self._y_maxs[i] = 0.0
 
     def render(self):
         """Redraw all tracks. Call once per 60fps tick."""
-        if self.width == 0 or self.height == 0:
+        if not self._xs_valid or self.width == 0 or self.height == 0:
             return
         track_h = self.height / self._n
         for i in range(self._n):
             y_base = self.y + (self._n - 1 - i) * track_h
             self._rects[i].pos  = (self.x, y_base)
             self._rects[i].size = (self.width, track_h)
-            self._draw_track(i, self._buffers[i], y_base, track_h)
+            self._draw_track(i, y_base, track_h)
 
     # ------------------------------------------------------------------
     # Internal
     # ------------------------------------------------------------------
 
-    def _update_layout(self, *args):
-        self.render()
+    def _draw_track(self, idx, y_base, track_h):
+        cap = CFG.PLOT_DISPLAY_SAMPLES
+        w   = self._buf_writes[idx]
+        buf = self._buffers[idx]
+        rb  = self._render_bufs[idx]
+        pts = self._pts_arrays[idx]
 
-    def _draw_track(self, idx, buf, y_base, track_h):
-        """Draw a single track in its allocated horizontal strip."""
-        ds  = buf[::CFG.PLOT_DOWNSAMPLE]
-        n   = len(ds)
-        if n < 2:
-            self._lines[idx].points = []
-            return
+        # Linearise circular buffer into pre-allocated scratch (no allocation)
+        rb[:cap - w] = buf[w:]
+        rb[cap - w:] = buf[:w]
 
-        buf_min = ds.min()
-        buf_max = ds.max()
-        span    = buf_max - buf_min
+        ds = rb[::CFG.PLOT_DOWNSAMPLE]  # view, no copy
+
+        # Expand peak-hold range (only grows, never shrinks)
+        self._y_mins[idx] = min(self._y_mins[idx], ds.min())
+        self._y_maxs[idx] = max(self._y_maxs[idx], ds.max())
+        span = self._y_maxs[idx] - self._y_mins[idx]
 
         if span == 0:
-            ys = np.full(n, y_base + track_h * 0.5)
+            ys = np.full(_N_PTS, y_base + track_h * 0.5)
         else:
-            # 80% of strip height, 10% padding top and bottom
-            ys = y_base + ((ds - buf_min) / span) * track_h * 0.8 + track_h * 0.1
+            ys = y_base + ((ds - self._y_mins[idx]) / span) * track_h * 0.8 + track_h * 0.1
 
-        xs  = self.x + np.arange(n) * (self.width / (n - 1))
-        pts = np.empty(2 * n, dtype=float)
-        pts[0::2] = xs
+        # Fill ys in-place; xs are already in pts[0::2] from _update_layout
         pts[1::2] = ys
-        self._lines[idx].points = list(pts)
+        self._lines[idx].points = pts.tolist()

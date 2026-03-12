@@ -103,6 +103,10 @@ class LiveDataScreen(Screen):
         # Latest raw (72-ch) data arriving from receiver — read in _ui_tick
         self._pending_data = None
 
+        # Contraction state set by receiver thread, read by _ui_tick (no Clock.schedule_once)
+        self._contraction_text = 'No Contraction'
+        self._contraction_color = (0.8, 0.3, 0.3, 1)
+
         # Per-channel rolling buffers for heatmap RMS computation (last 100 samples)
         self._heatmap_buffer = np.zeros((64, 100))
         self._heatmap_buf_idx = 0
@@ -237,10 +241,13 @@ class LiveDataScreen(Screen):
         self._active_tab = 'plot'
 
     def _configure_pipelines(self):
-        get_pipeline('filtered').add_stage(filters.butter_bandpass)
+        # Stateful causal IIR filters — vectorized across channels, forward-only
+        # (no filtfilt). Separate bandpass instances per pipeline to avoid shared state.
+        filters.init_live_filters(CFG.DEVICE_CHANNELS)
+        get_pipeline('filtered').add_stage(lambda data: filters._live_bp_filtered(data))
         get_pipeline('rectified').add_stage(filters.rectify)
-        get_pipeline('final').add_stage(filters.butter_bandpass)
-        get_pipeline('final').add_stage(filters.notch)
+        get_pipeline('final').add_stage(lambda data: filters._live_bp_final(data))
+        get_pipeline('final').add_stage(lambda data: filters._live_notch_final(data))
         get_pipeline('final').add_stage(filters.rectify)
 
     # ------------------------------------------------------------------
@@ -356,6 +363,7 @@ class LiveDataScreen(Screen):
         threading.Thread(target=connect, daemon=True).start()
 
     def _on_connected(self, dt):
+        filters.reset_live_filters()
         self.receiver_thread = DataReceiverThread(
             device=self.device,
             client_socket=self.device.client_socket,
@@ -413,25 +421,30 @@ class LiveDataScreen(Screen):
         if self._calibration_extra_callback is not None:
             self._calibration_extra_callback(stage, data)
 
-        # Store latest data for the 60fps render tick (no Clock call needed)
+        # Store latest data for the render tick (no Clock call needed)
         if stage == 'final':
             self._pending_data = data.copy()
 
-            # Contraction detection (channel 0 threshold check)
+            # Contraction detection — store state for _ui_tick to read (no schedule_once)
             if self.is_calibrated and self.threshold is not None:
                 ch0_rms = float(np.sqrt(np.mean(data[0] ** 2)))
-                label = 'Contraction' if ch0_rms > self.threshold[0] else 'No Contraction'
-                color = (0.2, 0.9, 0.4, 1) if ch0_rms > self.threshold[0] else (0.8, 0.3, 0.3, 1)
-                Clock.schedule_once(
-                    lambda dt, lbl=label, clr=color: self._update_contraction(lbl, clr), 0
-                )
+                if ch0_rms > self.threshold[0]:
+                    self._contraction_text = 'Contraction'
+                    self._contraction_color = (0.2, 0.9, 0.4, 1)
+                else:
+                    self._contraction_text = 'No Contraction'
+                    self._contraction_color = (0.8, 0.3, 0.3, 1)
 
     def _ui_tick(self, dt):
-        """60fps Kivy Clock tick — render active panel from latest data."""
+        """30fps Kivy Clock tick — render active panel from latest data."""
         data = self._pending_data
         if data is None:
             return
         self._pending_data = None
+
+        # Update contraction label (reads state set by receiver thread)
+        self.contraction_label.text = self._contraction_text
+        self.contraction_label.color = self._contraction_color
 
         if self._active_tab == 'plot':
             self._render_plot_panel(data)

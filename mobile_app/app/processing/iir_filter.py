@@ -156,6 +156,63 @@ def find_peaks(x, height=None, distance=None):
 
 
 # ---------------------------------------------------------------------------
+# Stateful causal IIR filter (live streaming)
+# ---------------------------------------------------------------------------
+
+class StatefulIIRFilter:
+    """Causal IIR filter that maintains state across calls.
+
+    Vectorized across channels: at each sample step, all channels are processed
+    simultaneously using numpy array operations.  The Python loop is only over
+    the sample dimension (typically 125 per packet), not over channels.
+
+    Usage
+    -----
+    filt = StatefulIIRFilter(b, a, n_channels=72)
+    out  = filt(data)   # data shape (n_channels, n_samples)
+    # state persists — next call continues from where this one left off
+    filt.reset()        # zero state for a fresh streaming session
+    """
+
+    def __init__(self, b, a, n_channels):
+        b = np.asarray(b, dtype=np.float64)
+        a = np.asarray(a, dtype=np.float64)
+        if a[0] != 1.0:
+            b = b / a[0]
+            a = a / a[0]
+
+        M = max(len(b), len(a)) - 1
+        self.b = np.r_[b, np.zeros(max(0, M + 1 - len(b)))]
+        self.a = np.r_[a, np.zeros(max(0, M + 1 - len(a)))]
+        self.M = M
+        self.n_channels = n_channels
+        self._z = np.zeros((n_channels, M), dtype=np.float64)
+
+    def __call__(self, data):
+        """Filter data of shape (n_channels, n_samples). Returns same shape."""
+        n_samples = data.shape[1]
+        b = self.b
+        a = self.a
+        M = self.M
+        z = self._z
+        out = np.empty_like(data, dtype=np.float32)
+
+        for i in range(n_samples):
+            x_i = data[:, i].astype(np.float64)
+            y_i = b[0] * x_i + z[:, 0]
+            for j in range(M - 1):
+                z[:, j] = b[j + 1] * x_i - a[j + 1] * y_i + z[:, j + 1]
+            z[:, M - 1] = b[M] * x_i - a[M] * y_i
+            out[:, i] = y_i
+
+        return out
+
+    def reset(self):
+        """Zero filter state for a fresh streaming session."""
+        self._z[:] = 0.0
+
+
+# ---------------------------------------------------------------------------
 # Resampling
 # ---------------------------------------------------------------------------
 

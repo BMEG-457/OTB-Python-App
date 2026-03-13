@@ -34,6 +34,10 @@ class EMGPlotWidget(Widget):
         # Pre-allocated render scratch buffer (linearised view of circular buf)
         self._render_buf = np.empty(CFG.PLOT_DISPLAY_SAMPLES)
 
+        # Peak-hold y-axis range — only expands, never shrinks
+        self._y_min = 0.0
+        self._y_max = 0.0
+
         # Pre-allocated interleaved point array [x0,y0, x1,y1, ...]
         self._pts = np.empty(2 * _N_PTS)
 
@@ -92,6 +96,11 @@ class EMGPlotWidget(Widget):
             self._buffer[:n - split]       = new[split:]
             self._buf_write = n - split
 
+    def reset_scale(self):
+        """Reset peak-hold y-axis range (call on stream start)."""
+        self._y_min = 0.0
+        self._y_max = 0.0
+
     def render(self):
         """Redraw the canvas from the current buffer. Call from the 60fps tick."""
         self._draw()
@@ -113,14 +122,15 @@ class EMGPlotWidget(Widget):
 
         buf = self._render_buf[::CFG.PLOT_DOWNSAMPLE]  # view, no copy
 
-        buf_min = buf.min()
-        buf_max = buf.max()
-        span    = buf_max - buf_min
+        # Expand peak-hold range (only grows, never shrinks)
+        self._y_min = min(self._y_min, buf.min())
+        self._y_max = max(self._y_max, buf.max())
+        span = self._y_max - self._y_min
 
         if span == 0:
             ys = np.full(_N_PTS, self.y + self.height * 0.5)
         else:
-            ys = self.y + ((buf - buf_min) / span) * self.height * 0.8 + self.height * 0.1
+            ys = self.y + ((buf - self._y_min) / span) * self.height * 0.8 + self.height * 0.1
 
         # Fill ys in-place into pre-allocated pts array
         self._pts[1::2] = ys

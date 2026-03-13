@@ -6,6 +6,7 @@ import os
 import time
 
 from app.core.paths import get_recordings_dir
+from app.core import config as CFG
 
 
 class RecordingManager:
@@ -19,10 +20,10 @@ class RecordingManager:
         on_status(message: str) — called for recording status updates.
     """
 
-    def __init__(self, max_samples=1_000_000, on_overflow=None, on_status=None):
+    def __init__(self, max_samples=None, on_overflow=None, on_status=None):
         self.recording_data = []
         self.recording_start_time = None
-        self.max_recording_samples = max_samples
+        self.max_recording_samples = max_samples if max_samples is not None else CFG.RECORDING_MAX_SAMPLES
         self.is_recording = False
         self.on_overflow = on_overflow
         self.on_status = on_status

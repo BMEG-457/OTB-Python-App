@@ -14,6 +14,7 @@ from kivy.uix.popup import Popup
 from kivy.clock import Clock
 from kivy.metrics import sp
 
+from app.core import config as CFG
 from app.processing.features import (
     compute_tkeo_activation_timing,
     compute_burst_duration,
@@ -52,11 +53,12 @@ def _load_csv(filepath):
 
 def _estimated_fs(timestamps):
     """Estimate sample rate from timestamps."""
+    fallback = float(CFG.DEVICE_SAMPLE_RATE)
     if len(timestamps) < 2:
-        return 2000.0
+        return fallback
     dt = np.diff(timestamps)
     dt = dt[dt > 0]
-    return float(1.0 / np.median(dt)) if len(dt) > 0 else 2000.0
+    return float(1.0 / np.median(dt)) if len(dt) > 0 else fallback
 
 
 class DataAnalysisScreen(Screen):
@@ -165,7 +167,7 @@ class DataAnalysisScreen(Screen):
         # user_data_dir (private internal storage) is always accessible and is
         # where recordings fall back to if external storage permission is not
         # yet in effect (requires app restart after grant).
-        package = 'org.bmeg457.otbemgapp'
+        package = CFG.ANDROID_PACKAGE_NAME
 
         # Try Android API first — may succeed where direct POSIX access is blocked.
         _jnius_ext = None

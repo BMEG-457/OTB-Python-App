@@ -7,7 +7,7 @@ package.domain = org.bmeg457
 
 # Entry point
 source.dir = .
-source.include_exts = py,png,jpg,kv,atlas
+source.include_exts = py,png,jpg,kv,atlas,json
 source.include_patterns = assets/*
 
 # Dependencies

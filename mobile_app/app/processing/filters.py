@@ -36,7 +36,7 @@ def notch(data, freq=None, fs=None, quality=None):
     Arguments are accepted for API compatibility but ignored — the filter is
     fixed to CFG.NOTCH_FREQ_HZ / NOTCH_QUALITY at CFG.DEVICE_SAMPLE_RATE.
     """
-    if data.shape[-1] < 15:
+    if data.shape[-1] < CFG.NOTCH_MIN_SAMPLES:
         return data
     b = np.array(CFG.NOTCH_60_B)
     a = np.array(CFG.NOTCH_60_A)

@@ -1,6 +1,7 @@
 """Streaming controller for managing live data viewing."""
 
 from kivy.clock import Clock
+from app.core import config as CFG
 
 
 class StreamingController:
@@ -50,10 +51,10 @@ class StreamingController:
                 self._emit_status("ERROR: Cannot restart. Please restart the app.")
                 return False
 
-        # Start Kivy Clock for UI update loop (~30fps)
+        # Start Kivy Clock for UI update loop
         # Data arrives at 16 pkt/s; 30fps gives ~2 render chances per packet.
         # 60fps wastes most ticks on empty reads and starves the event loop.
-        self._clock_event = Clock.schedule_interval(self.update_callback, 1 / 30)
+        self._clock_event = Clock.schedule_interval(self.update_callback, 1 / CFG.RENDER_FPS)
         self._emit_status("Streaming...")
         print("[STREAMING] Clock started at 30fps")
         return True

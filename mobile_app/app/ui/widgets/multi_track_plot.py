@@ -44,6 +44,10 @@ class MultiTrackPlotWidget(Widget):
         # Pre-allocated interleaved point arrays [x0,y0, x1,y1, ...] per track
         self._pts_arrays = [np.empty(2 * _N_PTS) for _ in range(self._n)]
 
+        # Peak-hold y-axis range per track — only expands, never shrinks
+        self._y_mins = [0.0] * self._n
+        self._y_maxs = [0.0] * self._n
+
         # Shared xs — computed once on size change, stored in pts[0::2]
         self._xs_valid = False
 
@@ -108,6 +112,12 @@ class MultiTrackPlotWidget(Widget):
             self._buffers[idx][:n - split] = new[split:]
             self._buf_writes[idx]          = n - split
 
+    def reset_scale(self):
+        """Reset peak-hold y-axis range for all tracks (call on stream start)."""
+        for i in range(self._n):
+            self._y_mins[i] = 0.0
+            self._y_maxs[i] = 0.0
+
     def render(self):
         """Redraw all tracks. Call once per 60fps tick."""
         if not self._xs_valid or self.width == 0 or self.height == 0:
@@ -136,14 +146,15 @@ class MultiTrackPlotWidget(Widget):
 
         ds = rb[::CFG.PLOT_DOWNSAMPLE]  # view, no copy
 
-        buf_min = ds.min()
-        buf_max = ds.max()
-        span    = buf_max - buf_min
+        # Expand peak-hold range (only grows, never shrinks)
+        self._y_mins[idx] = min(self._y_mins[idx], ds.min())
+        self._y_maxs[idx] = max(self._y_maxs[idx], ds.max())
+        span = self._y_maxs[idx] - self._y_mins[idx]
 
         if span == 0:
             ys = np.full(_N_PTS, y_base + track_h * 0.5)
         else:
-            ys = y_base + ((ds - buf_min) / span) * track_h * 0.8 + track_h * 0.1
+            ys = y_base + ((ds - self._y_mins[idx]) / span) * track_h * 0.8 + track_h * 0.1
 
         # Fill ys in-place; xs are already in pts[0::2] from _update_layout
         pts[1::2] = ys

@@ -105,17 +105,24 @@ class LiveDataScreen(Screen):
 
         # Contraction state set by receiver thread, read by _ui_tick (no Clock.schedule_once)
         self._contraction_text = 'No Contraction'
-        self._contraction_color = (0.8, 0.3, 0.3, 1)
+        self._contraction_color = CFG.CONTRACTION_INACTIVE
 
-        # Per-channel rolling buffers for heatmap RMS computation (last 100 samples)
-        self._heatmap_buffer = np.zeros((64, 100))
+        # Per-channel rolling buffers for heatmap RMS computation
+        self._heatmap_buffer = np.zeros((CFG.HDSEMG_CHANNELS, CFG.HEATMAP_BUFFER_SAMPLES))
         self._heatmap_buf_idx = 0
 
         # View mode index into _VIEW_MODES
         self._view_mode_idx = 0
 
+        self._battery_event = None
         self._build_ui()
         self._configure_pipelines()
+
+    def on_enter(self):
+        self._start_battery_poll()
+
+    def on_leave(self):
+        self._stop_battery_poll()
 
     # ------------------------------------------------------------------
     # UI construction
@@ -142,28 +149,34 @@ class LiveDataScreen(Screen):
 
         self.btn_stream = Button(
             text='Start Stream', size_hint=(0.15, 1),
-            font_size=sp(15), background_color=(0.1, 0.6, 0.3, 1)
+            font_size=sp(15), background_color=CFG.BTN_STREAM_IDLE
         )
         self.btn_stream.bind(on_press=self._on_toggle_stream)
         top_bar.add_widget(self.btn_stream)
 
         self.btn_record = Button(
             text='Start Record', size_hint=(0.15, 1),
-            font_size=sp(15), background_color=(0.6, 0.1, 0.1, 1)
+            font_size=sp(15), background_color=CFG.BTN_RECORD_IDLE
         )
         self.btn_record.bind(on_press=self._on_toggle_record)
         self.btn_record.disabled = True
         top_bar.add_widget(self.btn_record)
 
         self.contraction_label = Label(
-            text='No Contraction', color=(0.8, 0.3, 0.3, 1),
-            size_hint=(0.22, 1), font_size=sp(15),
+            text='No Contraction', color=CFG.CONTRACTION_INACTIVE,
+            size_hint=(0.17, 1), font_size=sp(15),
         )
         top_bar.add_widget(self.contraction_label)
 
+        self.battery_label = Label(
+            text='Battery: --', color=(0.5, 0.5, 0.5, 1),
+            size_hint=(0.12, 1), font_size=sp(14),
+        )
+        top_bar.add_widget(self.battery_label)
+
         self.status_label = Label(
             text='Not connected', color=(0.7, 0.7, 0.7, 1),
-            size_hint=(0.27, 1), font_size=sp(14),
+            size_hint=(0.20, 1), font_size=sp(14),
         )
         top_bar.add_widget(self.status_label)
 
@@ -315,10 +328,46 @@ class LiveDataScreen(Screen):
         self._content.add_widget(self.plot_multi)
 
     # ------------------------------------------------------------------
+    # Battery polling (HTTP, independent of TCP streaming)
+    # ------------------------------------------------------------------
+
+    def _start_battery_poll(self):
+        self._poll_battery()  # immediate first query
+        self._battery_event = Clock.schedule_interval(
+            lambda dt: self._poll_battery(), CFG.BATTERY_POLL_INTERVAL
+        )
+
+    def _stop_battery_poll(self):
+        if hasattr(self, '_battery_event') and self._battery_event:
+            self._battery_event.cancel()
+            self._battery_event = None
+
+    def _poll_battery(self):
+        def query():
+            level = self.device.get_battery_level()
+            Clock.schedule_once(lambda dt: self._update_battery_display(level), 0)
+        threading.Thread(target=query, daemon=True).start()
+
+    def _update_battery_display(self, level):
+        if level is None:
+            self.battery_label.text = 'Battery: --'
+            self.battery_label.color = (0.5, 0.5, 0.5, 1)
+        else:
+            if level <= CFG.BATTERY_LOW_THRESHOLD:
+                color = CFG.BATTERY_LOW_COLOR
+            elif level <= CFG.BATTERY_MED_THRESHOLD:
+                color = CFG.BATTERY_MED_COLOR
+            else:
+                color = CFG.BATTERY_OK_COLOR
+            self.battery_label.text = f'Battery: {level}%'
+            self.battery_label.color = color
+
+    # ------------------------------------------------------------------
     # Navigation
     # ------------------------------------------------------------------
 
     def _go_back(self, instance):
+        self._stop_battery_poll()
         if self.streaming_controller and self.streaming_controller.is_streaming:
             self.streaming_controller.stop_streaming()
         self.manager.current = 'selection'
@@ -382,6 +431,8 @@ class LiveDataScreen(Screen):
             on_status=self._set_status,
         )
 
+        self.plot_single.reset_scale()
+        self.plot_multi.reset_scale()
         self.streaming_controller.start_streaming()
         self.btn_stream.text = 'Stop Stream'
         self.btn_stream.disabled = False
@@ -430,10 +481,10 @@ class LiveDataScreen(Screen):
                 ch0_rms = float(np.sqrt(np.mean(data[0] ** 2)))
                 if ch0_rms > self.threshold[0]:
                     self._contraction_text = 'Contraction'
-                    self._contraction_color = (0.2, 0.9, 0.4, 1)
+                    self._contraction_color = CFG.CONTRACTION_ACTIVE
                 else:
                     self._contraction_text = 'No Contraction'
-                    self._contraction_color = (0.8, 0.3, 0.3, 1)
+                    self._contraction_color = CFG.CONTRACTION_INACTIVE
 
     def _ui_tick(self, dt):
         """30fps Kivy Clock tick — render active panel from latest data."""
@@ -457,7 +508,7 @@ class LiveDataScreen(Screen):
             self.plot_single.update(data)
             self.plot_single.render()
         else:
-            if data.shape[0] < 64:
+            if data.shape[0] < CFG.HDSEMG_CHANNELS:
                 return
             aggregated = agg_fn(data)  # (n_tracks, samples)
             for i in range(min(n_tracks, aggregated.shape[0])):
@@ -465,17 +516,18 @@ class LiveDataScreen(Screen):
             self.plot_multi.render()
 
     def _render_heatmap_panel(self, data):
-        if data.shape[0] < 64:
+        if data.shape[0] < CFG.HDSEMG_CHANNELS:
             return
         # Accumulate samples into rolling buffer, compute per-channel RMS
         n  = data.shape[1]
-        hd = data[:64]  # (64, samples)
+        hd = data[:CFG.HDSEMG_CHANNELS]
+        buf_len = CFG.HEATMAP_BUFFER_SAMPLES
         # Vectorised circular-buffer write — replaces O(n) Python for-loop
-        start = self._heatmap_buf_idx % 100
-        if start + n <= 100:
+        start = self._heatmap_buf_idx % buf_len
+        if start + n <= buf_len:
             self._heatmap_buffer[:, start:start + n] = hd
         else:
-            split = 100 - start
+            split = buf_len - start
             self._heatmap_buffer[:, start:]    = hd[:, :split]
             self._heatmap_buffer[:, :n - split] = hd[:, split:]
         self._heatmap_buf_idx += n
@@ -483,7 +535,7 @@ class LiveDataScreen(Screen):
         rms = np.sqrt(np.mean(self._heatmap_buffer ** 2, axis=1))  # (64,)
 
         if self.is_calibrated and self.mvc_rms is not None:
-            mvc = self.mvc_rms[:64]
+            mvc = self.mvc_rms[:CFG.HDSEMG_CHANNELS]
             mvc = np.where(mvc > 0, mvc, 1.0)
             normalized = np.clip(rms / mvc, 0.0, 1.0)
         else:
@@ -540,7 +592,7 @@ class LiveDataScreen(Screen):
     def _start_recording(self):
         self.recording_manager.start_recording()
         self.btn_record.text = 'Stop Record'
-        self.btn_record.background_color = (0.8, 0.4, 0.0, 1)
+        self.btn_record.background_color = CFG.BTN_RECORD_SAVING
         self._set_status('Recording...')
 
     def _stop_recording(self):
@@ -556,7 +608,7 @@ class LiveDataScreen(Screen):
 
     def _on_save_done(self, success, message):
         self.btn_record.text = 'Start Record'
-        self.btn_record.background_color = (0.6, 0.1, 0.1, 1)
+        self.btn_record.background_color = CFG.BTN_RECORD_IDLE
         self.btn_record.disabled = False
         self._set_status('Saved' if success else 'Save failed')
         self._set_bottom(message)

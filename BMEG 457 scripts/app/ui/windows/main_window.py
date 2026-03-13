@@ -348,6 +348,8 @@ class SoundtrackWindow(QtWidgets.QWidget):
                 self._update_contraction_indicator(False)
             self._contraction_times.clear()
         else:
+            for track in self.tracks:
+                track.reset_scale()
             self.streaming_controller.start_streaming()
             self.stream_button.setText("Stop Live Stream")
 

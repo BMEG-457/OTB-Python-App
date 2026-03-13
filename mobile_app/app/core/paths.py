@@ -20,6 +20,8 @@ def get_data_dir():
       3. Kivy user_data_dir (private) — last resort, not visible to user
     On desktop: ~/OTB_EMG_Data.
     """
+    from app.core import config as CFG
+
     if _is_android():
         # Attempt 1: use Android's Java API to obtain the external files dir.
         # getExternalFilesDir() via jnius can succeed even when direct POSIX
@@ -29,7 +31,7 @@ def get_data_dir():
             PythonActivity = autoclass('org.kivy.android.PythonActivity')
             ext = PythonActivity.mActivity.getExternalFilesDir(None)
             if ext is not None:
-                path = os.path.join(ext.getAbsolutePath(), 'OTB_EMG')
+                path = os.path.join(ext.getAbsolutePath(), CFG.DATA_DIR_NAME)
                 os.makedirs(path, exist_ok=True)
                 test = os.path.join(path, '.write_test')
                 with open(test, 'w') as f:
@@ -41,11 +43,11 @@ def get_data_dir():
             print(f"[PATHS] jnius external files dir failed: {e}")
 
         # Attempt 2: direct POSIX path candidates (require storage GID in process).
-        package = 'org.bmeg457.otbemgapp'
+        package = CFG.ANDROID_PACKAGE_NAME
         candidates = [
-            f"/storage/emulated/0/Android/data/{package}/files/OTB_EMG",
-            "/storage/emulated/0/Documents/OTB_EMG",
-            "/sdcard/Documents/OTB_EMG",
+            f"/storage/emulated/0/Android/data/{package}/files/{CFG.DATA_DIR_NAME}",
+            f"/storage/emulated/0/Documents/{CFG.DATA_DIR_NAME}",
+            f"/sdcard/Documents/{CFG.DATA_DIR_NAME}",
         ]
         for path in candidates:
             try:
@@ -67,10 +69,11 @@ def get_data_dir():
         except Exception:
             pass
 
-    return os.path.join(os.path.expanduser("~"), "OTB_EMG_Data")
+    return os.path.join(os.path.expanduser("~"), CFG.DESKTOP_DATA_DIR_NAME)
 
 
 def get_recordings_dir():
-    rec = os.path.join(get_data_dir(), "recordings")
+    from app.core import config as CFG
+    rec = os.path.join(get_data_dir(), CFG.RECORDINGS_DIR_NAME)
     os.makedirs(rec, exist_ok=True)
     return rec

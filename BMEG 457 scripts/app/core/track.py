@@ -23,7 +23,11 @@ class Track:
         self.plot_widget.showGrid(x=True, y=True, alpha=0.3)
         self.plot_widget.getViewBox().setBackgroundColor(Config.COLOR_TRACK_BG)
         self.plot_widget.setAntialiasing(True)
-        self.plot_widget.enableAutoRange()
+        self.plot_widget.disableAutoRange()
+
+        # Peak-hold y-axis range — only expands, never shrinks
+        self._y_min = 0.0
+        self._y_max = 0.0
 
         # Add labels and units
         if 'HDsEMG' in title or 'channels' in title:
@@ -65,6 +69,22 @@ class Track:
             if not curve.isVisible():
                 continue
             curve.setData(self.time_array, self.buffer[i, :] * self.conv_fact + (self.offset * i))
+
+        # Expand peak-hold y-axis range across visible channels
+        if self.visible_channels:
+            visible_data = self.buffer[self.visible_channels, :] * self.conv_fact
+            offsets = np.array(self.visible_channels) * self.offset
+            cur_min = float((visible_data + offsets[:, None]).min())
+            cur_max = float((visible_data + offsets[:, None]).max())
+            self._y_min = min(self._y_min, cur_min)
+            self._y_max = max(self._y_max, cur_max)
+            if self._y_max > self._y_min:
+                self.plot_widget.setYRange(self._y_min, self._y_max, padding=0.1)
+
+    def reset_scale(self):
+        """Reset peak-hold y-axis range (call on stream start)."""
+        self._y_min = 0.0
+        self._y_max = 0.0
 
     def set_visible_channels(self, channels):
         """

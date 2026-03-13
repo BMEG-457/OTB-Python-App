@@ -24,12 +24,12 @@ class HeatmapWidget(Widget):
         bottom-left = channel 0, column-major order.
     """
 
-    COLS = 8
-    ROWS = 8
+    COLS = CFG.HDSEMG_GRID_COLS
+    ROWS = CFG.HDSEMG_GRID_ROWS
 
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        self._normalized_rms = np.zeros(64)
+        self._normalized_rms = np.zeros(CFG.HDSEMG_CHANNELS)
         self._cold = np.array(CFG.HEATMAP_COLD_RGB, dtype=float)
         self._hot  = np.array(CFG.HEATMAP_HOT_RGB,  dtype=float)
 
@@ -85,7 +85,7 @@ class HeatmapWidget(Widget):
         for row in range(self.ROWS):
             for col in range(self.COLS):
                 ch  = _channel_idx(col, row)
-                val = float(self._normalized_rms[ch]) if ch < 64 else 0.0
+                val = float(self._normalized_rms[ch]) if ch < CFG.HDSEMG_CHANNELS else 0.0
                 rgb = cold + val * (hot - cold)
                 c   = self._cell_colors[row * self.COLS + col]
                 c.r, c.g, c.b, c.a = float(rgb[0]), float(rgb[1]), float(rgb[2]), 1.0

@@ -1,19 +1,14 @@
 """Streaming controller for managing live data viewing."""
 
-from kivy.clock import Clock
+from PyQt5 import QtCore
 from app.core.config import Config
 
 
-class StreamingController:
+class StreamingController(QtCore.QObject):
     """Manages streaming state and receiver thread interactions."""
     
     # Signals for status updates
-    # status_update = QtCore.pyqtSignal(str)
-    
-    self._clock_event = Clock.schedule_interval(self.update_callback, 1/60)
-
-    # To stop:
-    self._clock_event.cancel()
+    status_update = QtCore.pyqtSignal(str)
     
     def __init__(self, timer, receiver_thread):
         super().__init__()

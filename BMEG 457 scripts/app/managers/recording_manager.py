@@ -1,24 +1,26 @@
 """Recording manager for handling EMG data recording and CSV export."""
 
+from PyQt5 import QtWidgets, QtCore
 import csv
 from datetime import datetime
 import os
 import time
 
 from app.core.paths import get_recordings_dir
+from app.core.config import Config
 
 
-class RecordingManager:
+class RecordingManager(QtCore.QObject):
     """Manages recording state and CSV export for EMG data."""
     
     # Signal emitted when recording should stop due to overflow
-    def __init__(self, max_samples=1_000_000, on_overflow=None, on_status=None):
-      self.on_overflow = on_overflow   # function to call on overflow
-      self.on_status = on_status       # function to call with status strings
+    overflow_stop_requested = QtCore.pyqtSignal()
     # Signal emitted when recording status changes
-    # status_update = QtCore.pyqtSignal(str)
+    status_update = QtCore.pyqtSignal(str)
     
-    def __init__(self, max_samples=1000000):
+    def __init__(self, max_samples=None):
+        if max_samples is None:
+            max_samples = Config.MAX_RECORDING_SAMPLES
         super().__init__()
         self.recording_data = []  # List of (timestamp, channel_data) tuples
         self.recording_start_time = None
@@ -63,7 +65,7 @@ class RecordingManager:
             # Check for overflow protection
             if len(self.recording_data) >= self.max_recording_samples:
                 # Stop recording and warn user
-                if self.on_overflow: self.on_overflow()
+                self.overflow_stop_requested.emit()
                 return
             
             # data shape: (channels, samples)
@@ -104,7 +106,7 @@ class RecordingManager:
         
         try:
             # Create recordings directory if it doesn't exist
-            recordings_dir = app/core/paths.py
+            recordings_dir = get_recordings_dir()
             os.makedirs(recordings_dir, exist_ok=True)
             
             # Generate filename with timestamp

@@ -16,6 +16,7 @@ from app.core.device import SessantaquattroPlus
 from app.ui.screens.selection_screen import SelectionScreen
 from app.ui.screens.live_data_screen import LiveDataScreen
 from app.ui.screens.data_analysis_screen import DataAnalysisScreen
+from app.ui.screens.analysis_plot_screen import AnalysisPlotScreen
 
 
 def _is_android():
@@ -35,6 +36,7 @@ class OTBApp(App):
         sm.add_widget(SelectionScreen(name='selection'))
         sm.add_widget(LiveDataScreen(name='live_data', device=self.device))
         sm.add_widget(DataAnalysisScreen(name='data_analysis'))
+        sm.add_widget(AnalysisPlotScreen(name='analysis_plot'))
 
         return sm
 

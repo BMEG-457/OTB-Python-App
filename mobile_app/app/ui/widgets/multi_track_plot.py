@@ -5,14 +5,11 @@ from kivy.uix.widget import Widget
 from kivy.graphics import Color, Line, Rectangle
 from app.core import config as CFG
 
-# Number of points rendered per track after downsampling
-_N_PTS = CFG.PLOT_DISPLAY_SAMPLES // CFG.PLOT_DOWNSAMPLE
-
 
 class MultiTrackPlotWidget(Widget):
     """Vertically stacked rolling plots — one track per aggregated signal.
 
-    Each track has an independent circular buffer of length PLOT_DISPLAY_SAMPLES.
+    Each track has an independent circular buffer of length `display_samples`.
     Call update_track(idx, samples) to feed new data, then render() once per
     60fps tick to redraw all tracks.
 
@@ -26,13 +23,20 @@ class MultiTrackPlotWidget(Widget):
         track_labels: list of str — one label per track (determines track count).
         track_colors: optional list of (r,g,b,a) tuples; cycles through
                       CFG.MULTI_TRACK_COLORS if not supplied.
+        display_samples: buffer length per track (default from config).
+        downsample: render downsample factor (default from config).
     """
 
-    def __init__(self, track_labels, track_colors=None, **kwargs):
+    def __init__(self, track_labels, track_colors=None,
+                 display_samples=CFG.PLOT_DISPLAY_SAMPLES,
+                 downsample=CFG.PLOT_DOWNSAMPLE, **kwargs):
         super().__init__(**kwargs)
         self._n      = len(track_labels)
         self._labels = track_labels
-        cap          = CFG.PLOT_DISPLAY_SAMPLES
+        self._display_samples = display_samples
+        self._downsample = downsample
+        self._n_pts = display_samples // downsample
+        cap = display_samples
 
         # Per-track circular buffers and write-pointers (no np.roll on update)
         self._buffers    = [np.zeros(cap) for _ in range(self._n)]
@@ -42,7 +46,7 @@ class MultiTrackPlotWidget(Widget):
         self._render_bufs = [np.empty(cap) for _ in range(self._n)]
 
         # Pre-allocated interleaved point arrays [x0,y0, x1,y1, ...] per track
-        self._pts_arrays = [np.empty(2 * _N_PTS) for _ in range(self._n)]
+        self._pts_arrays = [np.empty(2 * self._n_pts) for _ in range(self._n)]
 
         # Peak-hold y-axis range per track — only expands, never shrinks
         self._y_mins = [0.0] * self._n
@@ -74,7 +78,7 @@ class MultiTrackPlotWidget(Widget):
         if self.width == 0:
             return
         # Recompute shared xs and cache into each track's pts[0::2]
-        xs = self.x + np.arange(_N_PTS) * (self.width / max(_N_PTS - 1, 1))
+        xs = self.x + np.arange(self._n_pts) * (self.width / max(self._n_pts - 1, 1))
         for pts in self._pts_arrays:
             pts[0::2] = xs
         self._xs_valid = True
@@ -96,7 +100,7 @@ class MultiTrackPlotWidget(Widget):
 
         new = samples
         n   = len(new)
-        cap = CFG.PLOT_DISPLAY_SAMPLES
+        cap = self._display_samples
         w   = self._buf_writes[idx]
         end = w + n
 
@@ -134,7 +138,7 @@ class MultiTrackPlotWidget(Widget):
     # ------------------------------------------------------------------
 
     def _draw_track(self, idx, y_base, track_h):
-        cap = CFG.PLOT_DISPLAY_SAMPLES
+        cap = self._display_samples
         w   = self._buf_writes[idx]
         buf = self._buffers[idx]
         rb  = self._render_bufs[idx]
@@ -144,7 +148,7 @@ class MultiTrackPlotWidget(Widget):
         rb[:cap - w] = buf[w:]
         rb[cap - w:] = buf[:w]
 
-        ds = rb[::CFG.PLOT_DOWNSAMPLE]  # view, no copy
+        ds = rb[::self._downsample]  # view, no copy
 
         # Expand peak-hold range (only grows, never shrinks)
         self._y_mins[idx] = min(self._y_mins[idx], ds.min())
@@ -152,7 +156,7 @@ class MultiTrackPlotWidget(Widget):
         span = self._y_maxs[idx] - self._y_mins[idx]
 
         if span == 0:
-            ys = np.full(_N_PTS, y_base + track_h * 0.5)
+            ys = np.full(self._n_pts, y_base + track_h * 0.5)
         else:
             ys = y_base + ((ds - self._y_mins[idx]) / span) * track_h * 0.8 + track_h * 0.1
 

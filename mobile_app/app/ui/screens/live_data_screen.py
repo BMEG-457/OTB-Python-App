@@ -114,6 +114,12 @@ class LiveDataScreen(Screen):
         # View mode index into _VIEW_MODES
         self._view_mode_idx = 0
 
+        # Channel selector state (single-channel mode)
+        self._single_channel_idx = 0
+
+        # Time window preset index
+        self._time_window_idx = CFG.PLOT_DEFAULT_TIME_IDX
+
         self._battery_event = None
         self._build_ui()
         self._configure_pipelines()
@@ -189,23 +195,40 @@ class LiveDataScreen(Screen):
 
         self.btn_tab_plot = ToggleButton(
             text='EMG Plot', group='tab', state='down',
-            size_hint=(0.22, 1), font_size=sp(15),
+            size_hint=(0.18, 1), font_size=sp(15),
         )
         self.btn_tab_plot.bind(on_press=self._on_tab_plot)
         tab_bar.add_widget(self.btn_tab_plot)
 
         self.btn_tab_heatmap = ToggleButton(
             text='Heatmap', group='tab', state='normal',
-            size_hint=(0.22, 1), font_size=sp(15),
+            size_hint=(0.18, 1), font_size=sp(15),
         )
         self.btn_tab_heatmap.bind(on_press=self._on_tab_heatmap)
         tab_bar.add_widget(self.btn_tab_heatmap)
 
-        # Spacer
-        tab_bar.add_widget(Label(size_hint=(0.22, 1)))
+        # Time window cycle button
+        preset = CFG.PLOT_TIME_WINDOW_PRESETS[self._time_window_idx]
+        self.btn_time_window = Button(
+            text=f'Time: {preset["label"]}', size_hint=(0.14, 1), font_size=sp(14),
+        )
+        self.btn_time_window.bind(on_press=self._on_cycle_time_window)
+        tab_bar.add_widget(self.btn_time_window)
+
+        # Channel selector bar (visible only in single-channel view mode)
+        self._ch_bar = BoxLayout(orientation='horizontal', size_hint=(0.22, 1), spacing=2)
+        btn_ch_prev = Button(text='-', size_hint=(0.3, 1), font_size=sp(18))
+        btn_ch_prev.bind(on_press=self._on_ch_prev)
+        self.lbl_channel = Label(text='Ch 0', size_hint=(0.4, 1), font_size=sp(14))
+        btn_ch_next = Button(text='+', size_hint=(0.3, 1), font_size=sp(18))
+        btn_ch_next.bind(on_press=self._on_ch_next)
+        self._ch_bar.add_widget(btn_ch_prev)
+        self._ch_bar.add_widget(self.lbl_channel)
+        self._ch_bar.add_widget(btn_ch_next)
+        tab_bar.add_widget(self._ch_bar)
 
         self.btn_view_mode = Button(
-            text=f'View: {_VIEW_MODES[0][0]}', size_hint=(0.34, 1), font_size=sp(14),
+            text=f'View: {_VIEW_MODES[0][0]}', size_hint=(0.28, 1), font_size=sp(14),
         )
         self.btn_view_mode.bind(on_press=self._on_cycle_view)
         tab_bar.add_widget(self.btn_view_mode)
@@ -216,14 +239,18 @@ class LiveDataScreen(Screen):
         self._content = FloatLayout(size_hint=(1, 0.78))
 
         # Single-channel plot (default view)
+        tw = CFG.PLOT_TIME_WINDOW_PRESETS[self._time_window_idx]
         self.plot_single = EMGPlotWidget(
-            channel_index=0, size_hint=(1, 1), pos_hint={'x': 0, 'y': 0}
+            channel_index=self._single_channel_idx,
+            display_samples=tw['display_samples'], downsample=tw['downsample'],
+            size_hint=(1, 1), pos_hint={'x': 0, 'y': 0},
         )
 
         # Multi-track plot — starts with row labels; rebuilt on mode switch
         row_labels  = [f'Row {i}' for i in range(8)]
         self.plot_multi = MultiTrackPlotWidget(
             track_labels=row_labels,
+            display_samples=tw['display_samples'], downsample=tw['downsample'],
             size_hint=(1, 1), pos_hint={'x': 0, 'y': 0},
         )
         self.plot_multi.opacity = 0
@@ -271,6 +298,9 @@ class LiveDataScreen(Screen):
         self._active_tab = 'plot'
         self.btn_view_mode.opacity = 1
         self.btn_view_mode.disabled = False
+        self.btn_time_window.opacity = 1
+        self.btn_time_window.disabled = False
+        self._update_ch_bar_visibility()
         # Show active plot, hide heatmap
         self._show_active_plot_widget()
         self.heatmap.opacity = 0
@@ -279,6 +309,9 @@ class LiveDataScreen(Screen):
         self._active_tab = 'heatmap'
         self.btn_view_mode.opacity = 0
         self.btn_view_mode.disabled = True
+        self.btn_time_window.opacity = 0
+        self.btn_time_window.disabled = True
+        self._set_ch_bar_visible(False)
         # Hide plot widgets, show heatmap
         self.plot_single.opacity = 0
         self.plot_multi.opacity = 0
@@ -307,6 +340,8 @@ class LiveDataScreen(Screen):
         if n_tracks > 1:
             self._rebuild_multi_track(label, n_tracks)
 
+        self._update_ch_bar_visibility()
+
         if self._active_tab == 'plot':
             self._show_active_plot_widget()
 
@@ -320,12 +355,84 @@ class LiveDataScreen(Screen):
         else:
             labels = [f'C{i}' for i in range(n_tracks)]
 
+        tw = CFG.PLOT_TIME_WINDOW_PRESETS[self._time_window_idx]
         self.plot_multi = MultiTrackPlotWidget(
             track_labels=labels,
+            display_samples=tw['display_samples'], downsample=tw['downsample'],
             size_hint=(1, 1), pos_hint={'x': 0, 'y': 0},
         )
         self.plot_multi.opacity = 0
         self._content.add_widget(self.plot_multi)
+
+    # ------------------------------------------------------------------
+    # Time window cycling
+    # ------------------------------------------------------------------
+
+    def _on_cycle_time_window(self, instance):
+        presets = CFG.PLOT_TIME_WINDOW_PRESETS
+        self._time_window_idx = (self._time_window_idx + 1) % len(presets)
+        tw = presets[self._time_window_idx]
+        self.btn_time_window.text = f'Time: {tw["label"]}'
+        self._rebuild_plot_widgets()
+
+    def _rebuild_plot_widgets(self):
+        """Recreate both plot widgets with the current time window preset."""
+        tw = CFG.PLOT_TIME_WINDOW_PRESETS[self._time_window_idx]
+        ds = tw['display_samples']
+        dn = tw['downsample']
+
+        # Rebuild single-channel plot
+        self._content.remove_widget(self.plot_single)
+        self.plot_single = EMGPlotWidget(
+            channel_index=self._single_channel_idx,
+            display_samples=ds, downsample=dn,
+            size_hint=(1, 1), pos_hint={'x': 0, 'y': 0},
+        )
+        self._content.add_widget(self.plot_single)
+
+        # Rebuild multi-track plot with current view mode labels
+        label, n_tracks, _ = _VIEW_MODES[self._view_mode_idx]
+        self._rebuild_multi_track(label, max(n_tracks, 8))
+
+        # Restore correct visibility
+        if self._active_tab == 'plot':
+            self._show_active_plot_widget()
+            self.heatmap.opacity = 0
+        else:
+            self.plot_single.opacity = 0
+            self.plot_multi.opacity = 0
+
+    # ------------------------------------------------------------------
+    # Channel selector
+    # ------------------------------------------------------------------
+
+    def _on_ch_prev(self, instance):
+        self._single_channel_idx = (self._single_channel_idx - 1) % CFG.DEVICE_CHANNELS
+        self._apply_channel_change()
+
+    def _on_ch_next(self, instance):
+        self._single_channel_idx = (self._single_channel_idx + 1) % CFG.DEVICE_CHANNELS
+        self._apply_channel_change()
+
+    def _apply_channel_change(self):
+        ch = self._single_channel_idx
+        self.lbl_channel.text = f'Ch {ch}'
+        self.plot_single.channel_index = ch
+        self.plot_single.reset_scale()
+        _VIEW_MODES[0] = (f'Single Ch{ch}', 1, None)
+        if self._view_mode_idx == 0:
+            self.btn_view_mode.text = f'View: Single Ch{ch}'
+
+    def _update_ch_bar_visibility(self):
+        """Show channel bar only when in single-channel view mode."""
+        _, n_tracks, _ = _VIEW_MODES[self._view_mode_idx]
+        self._set_ch_bar_visible(n_tracks == 1)
+
+    def _set_ch_bar_visible(self, visible):
+        self._ch_bar.opacity = 1 if visible else 0
+        self._ch_bar.disabled = not visible
+        for child in self._ch_bar.children:
+            child.disabled = not visible
 
     # ------------------------------------------------------------------
     # Battery polling (HTTP, independent of TCP streaming)

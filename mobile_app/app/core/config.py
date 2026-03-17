@@ -65,6 +65,10 @@ PLOT_DOWNSAMPLE      = _raw['plot']['downsample']
 PLOT_CHANNEL_INDEX   = _raw['plot']['channel_index']
 PLOT_BG_RGBA         = tuple(_raw['plot']['bg_rgba'])
 PLOT_LINE_RGBA       = tuple(_raw['plot']['line_rgba'])
+PLOT_TIME_WINDOW_PRESETS = _raw['plot'].get('time_window_presets', [
+    {'label': '2s', 'display_samples': 4000, 'downsample': 4},
+])
+PLOT_DEFAULT_TIME_IDX   = _raw['plot'].get('default_time_window_idx', 0)
 
 # -- Calibration ---------------------------------------------------------------
 CALIBRATION_REST_DURATION  = _raw['calibration']['rest_duration']

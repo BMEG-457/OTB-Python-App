@@ -5,15 +5,12 @@ from kivy.uix.widget import Widget
 from kivy.graphics import Color, Line, Rectangle
 from app.core import config as CFG
 
-# Number of points rendered after downsampling
-_N_PTS = CFG.PLOT_DISPLAY_SAMPLES // CFG.PLOT_DOWNSAMPLE
-
 
 class EMGPlotWidget(Widget):
     """Rolling single-channel EMG plot.
 
-    Displays the last CFG.PLOT_DISPLAY_SAMPLES samples of one channel,
-    downsampled by CFG.PLOT_DOWNSAMPLE for performance.
+    Displays the last `display_samples` samples of one channel,
+    downsampled by `downsample` for performance.
     Call update(data) with a (channels, samples) array on each packet.
 
     Performance notes vs original:
@@ -23,23 +20,28 @@ class EMGPlotWidget(Widget):
     - .tolist() replaces list() for ~5x faster numpy→Python list conversion
     """
 
-    def __init__(self, channel_index=CFG.PLOT_CHANNEL_INDEX, **kwargs):
+    def __init__(self, channel_index=CFG.PLOT_CHANNEL_INDEX,
+                 display_samples=CFG.PLOT_DISPLAY_SAMPLES,
+                 downsample=CFG.PLOT_DOWNSAMPLE, **kwargs):
         super().__init__(**kwargs)
         self.channel_index = channel_index
+        self._display_samples = display_samples
+        self._downsample = downsample
+        self._n_pts = display_samples // downsample
 
         # Circular buffer — write-pointer avoids np.roll on every packet
-        self._buffer    = np.zeros(CFG.PLOT_DISPLAY_SAMPLES)
+        self._buffer    = np.zeros(display_samples)
         self._buf_write = 0
 
         # Pre-allocated render scratch buffer (linearised view of circular buf)
-        self._render_buf = np.empty(CFG.PLOT_DISPLAY_SAMPLES)
+        self._render_buf = np.empty(display_samples)
 
         # Peak-hold y-axis range — only expands, never shrinks
         self._y_min = 0.0
         self._y_max = 0.0
 
         # Pre-allocated interleaved point array [x0,y0, x1,y1, ...]
-        self._pts = np.empty(2 * _N_PTS)
+        self._pts = np.empty(2 * self._n_pts)
 
         # xs cached from last size event; None forces recompute on first draw
         self._xs_valid = False
@@ -60,7 +62,7 @@ class EMGPlotWidget(Widget):
         self._rect.pos  = self.pos
         self._rect.size = self.size
         # Recompute xs and cache into pts[0::2]
-        xs = self.x + np.arange(_N_PTS) * (self.width / max(_N_PTS - 1, 1))
+        xs = self.x + np.arange(self._n_pts) * (self.width / max(self._n_pts - 1, 1))
         self._pts[0::2] = xs
         self._xs_valid  = True
         self._draw()
@@ -80,7 +82,7 @@ class EMGPlotWidget(Widget):
 
         new = data[self.channel_index]
         n   = len(new)
-        cap = CFG.PLOT_DISPLAY_SAMPLES
+        cap = self._display_samples
         end = self._buf_write + n
 
         if n >= cap:
@@ -116,11 +118,11 @@ class EMGPlotWidget(Widget):
 
         # Linearise circular buffer into pre-allocated scratch (no allocation)
         idx = self._buf_write
-        cap = CFG.PLOT_DISPLAY_SAMPLES
+        cap = self._display_samples
         self._render_buf[: cap - idx] = self._buffer[idx:]
         self._render_buf[cap - idx:]  = self._buffer[:idx]
 
-        buf = self._render_buf[::CFG.PLOT_DOWNSAMPLE]  # view, no copy
+        buf = self._render_buf[::self._downsample]  # view, no copy
 
         # Expand peak-hold range (only grows, never shrinks)
         self._y_min = min(self._y_min, buf.min())
@@ -128,7 +130,7 @@ class EMGPlotWidget(Widget):
         span = self._y_max - self._y_min
 
         if span == 0:
-            ys = np.full(_N_PTS, self.y + self.height * 0.5)
+            ys = np.full(self._n_pts, self.y + self.height * 0.5)
         else:
             ys = self.y + ((buf - self._y_min) / span) * self.height * 0.8 + self.height * 0.1
 

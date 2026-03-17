@@ -71,7 +71,13 @@
     "downsample": 4,
     "channel_index": 0,
     "bg_rgba": [0.118, 0.118, 0.118, 1.0],
-    "line_rgba": [0.0, 0.800, 0.533, 1.0]
+    "line_rgba": [0.0, 0.800, 0.533, 1.0],
+    "time_window_presets": [
+      {"label": "2s", "display_samples": 4000, "downsample": 4},
+      {"label": "4s", "display_samples": 8000, "downsample": 8},
+      {"label": "8s", "display_samples": 16000, "downsample": 16}
+    ],
+    "default_time_window_idx": 0
   },
 
   "calibration": {

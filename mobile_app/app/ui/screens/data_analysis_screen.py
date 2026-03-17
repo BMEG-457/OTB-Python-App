@@ -11,6 +11,7 @@ from kivy.uix.scrollview import ScrollView
 from kivy.uix.button import Button
 from kivy.uix.label import Label
 from kivy.uix.popup import Popup
+from kivy.uix.textinput import TextInput
 from kivy.clock import Clock
 from kivy.metrics import sp
 
@@ -102,17 +103,33 @@ class DataAnalysisScreen(Screen):
         # File load bar
         file_bar = BoxLayout(orientation='horizontal', size_hint=(1, 0.08), padding=4, spacing=4)
 
-        btn_load1 = Button(text='Load File 1', size_hint=(0.2, 1), font_size=sp(15))
+        btn_load1 = Button(text='Load File 1', size_hint=(0.18, 1), font_size=sp(15))
         btn_load1.bind(on_press=lambda x: self._show_file_chooser(1))
-        self.file1_label = Label(text='No file loaded', size_hint=(0.4, 1), font_size=sp(14),
-                                 color=(0.7, 0.7, 0.7, 1))
+        self.file1_label = Label(text='No file loaded', size_hint=(0.35, 1), font_size=sp(14),
+                                 color=(0.7, 0.7, 0.7, 1), shorten=True,
+                                 shorten_from='right')
+        self.file1_label.bind(size=lambda inst, val: setattr(inst, 'text_size', (inst.width, None)))
         self.file2_label = Label(text='File 2: not loaded (bilateral symmetry)',
-                                 size_hint=(0.4, 1), font_size=sp(14), color=(0.7, 0.7, 0.7, 1))
+                                 size_hint=(0.35, 1), font_size=sp(14), color=(0.7, 0.7, 0.7, 1),
+                                 shorten=True, shorten_from='right')
+        self.file2_label.bind(size=lambda inst, val: setattr(inst, 'text_size', (inst.width, None)))
+        btn_plot = Button(text='Plot Data', size_hint=(0.12, 1), font_size=sp(15))
+        btn_plot.bind(on_press=self._show_plot)
 
         file_bar.add_widget(btn_load1)
         file_bar.add_widget(self.file1_label)
         file_bar.add_widget(self.file2_label)
+        file_bar.add_widget(btn_plot)
         root.add_widget(file_bar)
+
+        # Channel selector
+        ch_bar = BoxLayout(orientation='horizontal', size_hint=(1, 0.075), padding=4, spacing=4)
+        ch_bar.add_widget(Label(text='Channel:', size_hint=(0.15, 1), font_size=sp(15)))
+        self.channel_input = TextInput(text='1', size_hint=(0.12, 1), font_size=sp(15),
+                                       input_filter='int', multiline=False, halign='center')
+        ch_bar.add_widget(self.channel_input)
+        ch_bar.add_widget(Label(size_hint=(0.73, 1)))  # spacer
+        root.add_widget(ch_bar)
 
         # Analysis buttons
         btn_grid = GridLayout(cols=3, size_hint=(1, 0.12), padding=4, spacing=4)
@@ -131,7 +148,7 @@ class DataAnalysisScreen(Screen):
         root.add_widget(btn_grid)
 
         # Results area (scrollable)
-        scroll = ScrollView(size_hint=(1, 0.72))
+        scroll = ScrollView(size_hint=(1, 0.645))
         self.results_label = Label(
             text='Load a recording file and run an analysis.',
             font_size=sp(15),
@@ -344,15 +361,32 @@ class DataAnalysisScreen(Screen):
             return False
         return True
 
+    def _selected_channel(self, data=None):
+        """Return 0-based channel index from the channel input, or None if invalid."""
+        if data is None:
+            data = self._data1
+        try:
+            ch = int(self.channel_input.text) - 1
+        except (ValueError, TypeError):
+            return None
+        if data is None or ch < 0 or ch >= data.shape[0]:
+            return None
+        return ch
+
     def _run_tkeo(self, instance):
         if not self._require_file1():
             return
+        ch_idx = self._selected_channel()
+        if ch_idx is None:
+            self._set_results(f'Invalid channel number. Enter 1–{self._data1.shape[0]}.')
+            return
+        ch_num = ch_idx + 1
         self._set_results('Running activation timing analysis...')
 
         def run():
-            ch0 = self._data1[0]
+            ch = self._data1[ch_idx]
             fs = _estimated_fs(self._ts1)
-            result = compute_tkeo_activation_timing(ch0, self._ts1, fs)
+            result = compute_tkeo_activation_timing(ch, self._ts1, fs)
             if result is None:
                 text = 'Activation timing: analysis failed (check data quality).'
             else:
@@ -360,7 +394,7 @@ class DataAnalysisScreen(Screen):
                 times = ', '.join(f'{t:.2f}s' for t in result.onset_times[:10])
                 suffix = '...' if n > 10 else ''
                 text = (
-                    f'Activation Timing (TKEO) — Channel 1\n'
+                    f'Activation Timing (TKEO) — Channel {ch_num}\n'
                     f'  Onsets detected: {n}\n'
                     f'  Detection threshold: {result.detection_threshold:.4f}\n'
                     f'  Sample rate: {result.sample_rate:.0f} Hz\n'
@@ -373,17 +407,22 @@ class DataAnalysisScreen(Screen):
     def _run_burst(self, instance):
         if not self._require_file1():
             return
+        ch_idx = self._selected_channel()
+        if ch_idx is None:
+            self._set_results(f'Invalid channel number. Enter 1–{self._data1.shape[0]}.')
+            return
+        ch_num = ch_idx + 1
         self._set_results('Running burst duration analysis...')
 
         def run():
-            ch0 = self._data1[0]
+            ch = self._data1[ch_idx]
             fs = _estimated_fs(self._ts1)
-            result = compute_burst_duration(ch0, self._ts1, fs)
+            result = compute_burst_duration(ch, self._ts1, fs)
             if result is None:
                 text = 'Burst duration: analysis failed.'
             else:
                 text = (
-                    f'Burst Duration — Channel 1\n'
+                    f'Burst Duration — Channel {ch_num}\n'
                     f'  Bursts detected: {result.num_bursts}\n'
                     f'  Average duration: {result.avg_duration:.3f} s\n'
                     f'  Std deviation: {result.std_duration:.3f} s'
@@ -398,12 +437,17 @@ class DataAnalysisScreen(Screen):
     def _run_fatigue(self, instance):
         if not self._require_file1():
             return
+        ch_idx = self._selected_channel()
+        if ch_idx is None:
+            self._set_results(f'Invalid channel number. Enter 1–{self._data1.shape[0]}.')
+            return
+        ch_num = ch_idx + 1
         self._set_results('Running fatigue analysis...')
 
         def run():
-            ch0 = self._data1[0]
+            ch = self._data1[ch_idx]
             fs = _estimated_fs(self._ts1)
-            result = compute_fatigue(ch0, self._ts1, fs)
+            result = compute_fatigue(ch, self._ts1, fs)
             if result is None:
                 text = 'Fatigue: analysis failed.'
             else:
@@ -416,7 +460,7 @@ class DataAnalysisScreen(Screen):
                     if result.time_to_mf_fatigue is not None else 'Not detected'
                 )
                 text = (
-                    f'Fatigue Analysis — Channel 1\n'
+                    f'Fatigue Analysis — Channel {ch_num}\n'
                     f'  Baseline RMS: {result.baseline_rms:.4f}\n'
                     f'  RMS fatigue onset: {rms_onset}\n'
                     f'    (threshold: +{result.rms_threshold*100:.1f}% increase)\n'
@@ -431,6 +475,10 @@ class DataAnalysisScreen(Screen):
         if self._data1 is None:
             self._set_results('Load File 1 first.')
             return
+        ch_idx = self._selected_channel()
+        if ch_idx is None:
+            self._set_results(f'Invalid channel number. Enter 1–{self._data1.shape[0]}.')
+            return
         if self._data2 is None:
             self._pending_bilateral = True
             self._show_file_chooser(2)
@@ -438,19 +486,28 @@ class DataAnalysisScreen(Screen):
         self._do_run_bilateral()
 
     def _do_run_bilateral(self):
+        ch_idx = self._selected_channel()
+        if ch_idx is None:
+            self._set_results(f'Invalid channel number. Enter 1–{self._data1.shape[0]}.')
+            return
+        ch_idx_2 = self._selected_channel(self._data2)
+        if ch_idx_2 is None:
+            self._set_results(f'Channel {ch_idx + 1} out of range for File 2 ({self._data2.shape[0]} channels).')
+            return
+        ch_num = ch_idx + 1
         self._set_results('Running bilateral symmetry analysis...')
 
         def run():
-            ch0_1 = self._data1[0]
-            ch0_2 = self._data2[0]
+            ch1 = self._data1[ch_idx]
+            ch2 = self._data2[ch_idx_2]
             fs1 = _estimated_fs(self._ts1)
             fs2 = _estimated_fs(self._ts2)
-            result = compute_bilateral_symmetry(ch0_1, self._ts1, fs1, ch0_2, self._ts2, fs2)
+            result = compute_bilateral_symmetry(ch1, self._ts1, fs1, ch2, self._ts2, fs2)
             if result is None:
                 text = 'Bilateral symmetry: analysis failed.'
             else:
                 text = (
-                    f'Bilateral Symmetry Index — Channel 1\n'
+                    f'Bilateral Symmetry Index — Channel {ch_num}\n'
                     f'  Mean SI: {result.mean_si:.4f}  '
                     f'(0 = symmetric, +1 = file1 dominant, -1 = file2 dominant)\n'
                     f'  Std SI: {result.std_si:.4f}\n'
@@ -528,6 +585,16 @@ class DataAnalysisScreen(Screen):
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
+
+    def _show_plot(self, _):
+        import os
+        if self._data1 is None:
+            self._set_results('Load a file first to plot.')
+            return
+        plot_screen = self.manager.get_screen('analysis_plot')
+        plot_screen.set_data(self._data1, self._ts1,
+                             filename=os.path.basename(self._file1))
+        self.manager.current = 'analysis_plot'
 
     def _set_results(self, text):
         self.results_label.text = text

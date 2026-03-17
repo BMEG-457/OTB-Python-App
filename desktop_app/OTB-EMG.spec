@@ -5,7 +5,7 @@ import os
 import sys
 
 block_cipher = None
-scripts_dir = os.path.join(os.getcwd(), 'BMEG 457 scripts')
+scripts_dir = SPECPATH  # directory containing this spec file (desktop_app/)
 
 # Locate runtime DLL sources
 _py_dir = os.path.dirname(sys.executable)

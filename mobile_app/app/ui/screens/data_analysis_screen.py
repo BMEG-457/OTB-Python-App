@@ -264,9 +264,10 @@ class DataAnalysisScreen(Screen):
         popup = Popup(title=f'Select File {slot}', content=content, size_hint=(0.92, 0.92))
         btn_cancel.bind(on_press=lambda x: popup.dismiss())
 
-        def populate(directory):
+        def populate(directory, scroll_to_name=None):
             file_list.clear_widgets()
             path_label.text = directory
+            scroll_target = None
 
             # Up-one-level row
             parent = os.path.dirname(directory)
@@ -276,7 +277,8 @@ class DataAnalysisScreen(Screen):
                     size_hint_y=None, height=sp(48),
                     background_color=(0.25, 0.30, 0.45, 1),
                 )
-                up_btn.bind(on_press=lambda x, p=parent: populate(p))
+                up_btn.bind(on_press=lambda x, p=parent, d=os.path.basename(directory):
+                            populate(p, scroll_to_name=d))
                 file_list.add_widget(up_btn)
 
             try:
@@ -301,6 +303,14 @@ class DataAnalysisScreen(Screen):
                 )
                 btn.bind(on_press=lambda x, p=dpath: populate(p))
                 file_list.add_widget(btn)
+                if d == scroll_to_name:
+                    scroll_target = btn
+
+            if scroll_target is not None:
+                from kivy.clock import Clock
+                def do_scroll(dt):
+                    scroll.scroll_to(scroll_target)
+                Clock.schedule_once(do_scroll, 0)
 
             for fname in csvs:
                 fpath = os.path.join(directory, fname)
@@ -592,8 +602,10 @@ class DataAnalysisScreen(Screen):
             self._set_results('Load a file first to plot.')
             return
         plot_screen = self.manager.get_screen('analysis_plot')
-        plot_screen.set_data(self._data1, self._ts1,
-                             filename=os.path.basename(self._file1))
+        # Only reload data if the file changed
+        if plot_screen._data is not self._data1:
+            plot_screen.set_data(self._data1, self._ts1,
+                                 filename=os.path.basename(self._file1))
         self.manager.current = 'analysis_plot'
 
     def _set_results(self, text):

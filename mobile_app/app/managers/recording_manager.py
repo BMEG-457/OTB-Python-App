@@ -69,7 +69,7 @@ class RecordingManager:
 
             for sample_idx in range(num_samples):
                 timestamp = current_time - self.recording_start_time
-                sample_data = data[:, sample_idx].copy()
+                sample_data = data[:CFG.HDSEMG_CHANNELS, sample_idx].copy()
                 self.recording_data.append((timestamp, sample_data))
 
                 if len(self.recording_data) >= self.max_recording_samples:

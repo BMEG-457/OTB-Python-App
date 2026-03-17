@@ -8,6 +8,7 @@ from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.floatlayout import FloatLayout
 from kivy.uix.button import Button
 from kivy.uix.togglebutton import ToggleButton
+from kivy.uix.textinput import TextInput
 from kivy.uix.label import Label
 from kivy.clock import Clock
 from kivy.metrics import sp
@@ -65,7 +66,7 @@ def _cluster_aggregates(data):
 
 # View mode definitions: (label, num_tracks, aggregation_fn or None)
 _VIEW_MODES = [
-    ('Single Ch0', 1,  None),
+    ('Single Ch1', 1,  None),
     ('Rows (8)',   8,  _row_aggregates),
     ('Cols (8)',   8,  _col_aggregates),
     ('Clusters',   16, _cluster_aggregates),
@@ -217,14 +218,16 @@ class LiveDataScreen(Screen):
 
         # Channel selector bar (visible only in single-channel view mode)
         self._ch_bar = BoxLayout(orientation='horizontal', size_hint=(0.22, 1), spacing=2)
-        btn_ch_prev = Button(text='-', size_hint=(0.3, 1), font_size=sp(18))
-        btn_ch_prev.bind(on_press=self._on_ch_prev)
-        self.lbl_channel = Label(text='Ch 0', size_hint=(0.4, 1), font_size=sp(14))
-        btn_ch_next = Button(text='+', size_hint=(0.3, 1), font_size=sp(18))
-        btn_ch_next.bind(on_press=self._on_ch_next)
-        self._ch_bar.add_widget(btn_ch_prev)
-        self._ch_bar.add_widget(self.lbl_channel)
-        self._ch_bar.add_widget(btn_ch_next)
+        ch_label = Label(text='Ch:', size_hint=(0.35, 1), font_size=sp(14))
+        self._ch_input = TextInput(
+            text=str(self._single_channel_idx + 1),
+            input_filter='int', multiline=False,
+            size_hint=(0.65, 1), font_size=sp(14),
+            halign='center', padding=[4, 4, 4, 4],
+        )
+        self._ch_input.bind(on_text_validate=self._on_ch_input_submit)
+        self._ch_bar.add_widget(ch_label)
+        self._ch_bar.add_widget(self._ch_input)
         tab_bar.add_widget(self._ch_bar)
 
         self.btn_view_mode = Button(
@@ -406,22 +409,25 @@ class LiveDataScreen(Screen):
     # Channel selector
     # ------------------------------------------------------------------
 
-    def _on_ch_prev(self, instance):
-        self._single_channel_idx = (self._single_channel_idx - 1) % CFG.DEVICE_CHANNELS
-        self._apply_channel_change()
-
-    def _on_ch_next(self, instance):
-        self._single_channel_idx = (self._single_channel_idx + 1) % CFG.DEVICE_CHANNELS
+    def _on_ch_input_submit(self, instance):
+        try:
+            val = int(instance.text)
+        except ValueError:
+            instance.text = str(self._single_channel_idx + 1)
+            return
+        # clamp to 1..HDSEMG_CHANNELS (64 EMG channels only, no aux)
+        val = max(1, min(val, CFG.HDSEMG_CHANNELS))
+        self._single_channel_idx = val - 1
+        instance.text = str(val)
         self._apply_channel_change()
 
     def _apply_channel_change(self):
         ch = self._single_channel_idx
-        self.lbl_channel.text = f'Ch {ch}'
         self.plot_single.channel_index = ch
         self.plot_single.reset_scale()
-        _VIEW_MODES[0] = (f'Single Ch{ch}', 1, None)
+        _VIEW_MODES[0] = (f'Single Ch{ch + 1}', 1, None)
         if self._view_mode_idx == 0:
-            self.btn_view_mode.text = f'View: Single Ch{ch}'
+            self.btn_view_mode.text = f'View: Single Ch{ch + 1}'
 
     def _update_ch_bar_visibility(self):
         """Show channel bar only when in single-channel view mode."""

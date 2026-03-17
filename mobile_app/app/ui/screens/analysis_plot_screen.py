@@ -1,22 +1,30 @@
 """Static EMG plot screen for post-session data inspection."""
 
+import threading
 import numpy as np
 
 from kivy.uix.screenmanager import Screen
 from kivy.uix.boxlayout import BoxLayout
 from kivy.uix.button import Button
+from kivy.uix.checkbox import CheckBox
 from kivy.uix.label import Label
+from kivy.uix.popup import Popup
+from kivy.uix.progressbar import ProgressBar
 from kivy.uix.slider import Slider
 from kivy.uix.widget import Widget
+from kivy.clock import Clock
 from kivy.graphics import Color, Line, Rectangle
 from kivy.metrics import sp
 
 from app.core import config as CFG
+from app.processing.filters import butter_bandpass, notch, rectify
+from app.processing.iir_filter import filtfilt
 
 _MAX_DISPLAY_PTS = 2000
 _Y_PAD = 0.05  # 5% vertical padding on each side
 _MIN_WINDOW = 0.05  # 50ms minimum view window
 _DEFAULT_WINDOW = 5.0  # initial view window in seconds
+_FILTER_PAD = 100  # extra samples on each side for filter edge effects
 
 
 class StaticEMGPlotWidget(Widget):
@@ -100,36 +108,56 @@ class AnalysisPlotScreen(Screen):
         self._view_duration = _DEFAULT_WINDOW
         self._slider_updating = False
 
+        # Filter state
+        self._filt_bandpass = False
+        self._filt_notch = False
+        self._filt_rectify = False
+        self._filt_envelope = False
+
+        # Per-channel filtered signal cache
+        self._cached_ch_idx = -1
+        self._cached_signal = None  # 1D filtered signal for current channel
+
         self._build_ui()
 
     def _build_ui(self):
         root = BoxLayout(orientation='vertical')
 
-        # Top bar: back + filename
+        # Top bar: back + filename + filters button
         top_bar = BoxLayout(orientation='horizontal', size_hint=(1, 0.07), padding=4, spacing=4)
         btn_back = Button(text='Back', size_hint=(0.12, 1), font_size=sp(16))
         btn_back.bind(on_press=lambda x: setattr(self.manager, 'current', 'data_analysis'))
         self._filename_label = Label(
             text='', font_size=sp(16), bold=True,
-            size_hint=(0.88, 1), halign='left', valign='middle',
+            size_hint=(0.73, 1), halign='left', valign='middle',
         )
         self._filename_label.bind(
             size=lambda inst, _: setattr(inst, 'text_size', (inst.width, None))
         )
+        btn_filters = Button(text='Filters', size_hint=(0.15, 1), font_size=sp(15))
+        btn_filters.bind(on_press=lambda x: self._show_filter_popup())
         top_bar.add_widget(btn_back)
         top_bar.add_widget(self._filename_label)
+        top_bar.add_widget(btn_filters)
         root.add_widget(top_bar)
 
-        # Channel navigation bar
+        # Channel selection bar
+        from kivy.uix.textinput import TextInput
         nav_bar = BoxLayout(orientation='horizontal', size_hint=(1, 0.07), padding=4, spacing=4)
-        btn_prev = Button(text='<< Prev', size_hint=(0.2, 1), font_size=sp(15))
-        btn_prev.bind(on_press=self._prev_ch)
-        self._ch_label = Label(text='', font_size=sp(15), size_hint=(0.6, 1))
-        btn_next = Button(text='Next >>', size_hint=(0.2, 1), font_size=sp(15))
-        btn_next.bind(on_press=self._next_ch)
-        nav_bar.add_widget(btn_prev)
+        nav_bar.add_widget(Label(text='Channel:', size_hint=(0.2, 1), font_size=sp(15)))
+        self._ch_input = TextInput(text='1', size_hint=(0.15, 1), font_size=sp(15),
+                                   input_filter='int', multiline=False, halign='center')
+        self._ch_input.bind(on_text_validate=self._on_ch_input)
+        nav_bar.add_widget(self._ch_input)
+        btn_go = Button(text='Go', size_hint=(0.12, 1), font_size=sp(15))
+        btn_go.bind(on_press=lambda x: self._on_ch_input())
+        nav_bar.add_widget(btn_go)
+        self._ch_label = Label(text='', font_size=sp(14), size_hint=(0.25, 1),
+                               color=(0.7, 0.7, 0.7, 1))
         nav_bar.add_widget(self._ch_label)
-        nav_bar.add_widget(btn_next)
+        self._filter_progress = ProgressBar(max=100, value=0, size_hint=(0.28, 1))
+        self._filter_progress.opacity = 0
+        nav_bar.add_widget(self._filter_progress)
         root.add_widget(nav_bar)
 
         # Plot area
@@ -192,6 +220,7 @@ class AnalysisPlotScreen(Screen):
         self._ts = timestamps
         self._filename = filename
         self._channel_idx = 0
+        self._invalidate_cache()
 
         # Compute total duration from timestamps
         if timestamps is not None and len(timestamps) > 1:
@@ -203,6 +232,146 @@ class AnalysisPlotScreen(Screen):
         self._view_start = 0.0
         self._view_duration = min(_DEFAULT_WINDOW, self._total_duration) if self._total_duration > 0 else _DEFAULT_WINDOW
         self._update_display()
+
+    # ------------------------------------------------------------------
+    # Filter popup
+    # ------------------------------------------------------------------
+
+    def _show_filter_popup(self):
+        from kivy.uix.scrollview import ScrollView
+
+        content = BoxLayout(orientation='vertical', padding=8, spacing=8)
+
+        # Scrollable area for filter options
+        scroll = ScrollView(size_hint=(1, 1))
+        options = BoxLayout(orientation='vertical', size_hint_y=None, spacing=8, padding=4)
+        options.bind(minimum_height=options.setter('height'))
+
+        filters = [
+            ('_cb_bandpass', self._filt_bandpass,
+             f'Bandpass ({CFG.BANDPASS_LOW_HZ:.0f}-{CFG.BANDPASS_HIGH_HZ:.0f} Hz)'),
+            ('_cb_notch', self._filt_notch,
+             f'Notch ({CFG.NOTCH_FREQ_HZ:.0f} Hz)'),
+            ('_cb_rectify', self._filt_rectify, 'Rectify'),
+            ('_cb_envelope', self._filt_envelope, 'Envelope (lowpass smoothing)'),
+        ]
+        for attr, active, label_text in filters:
+            row = BoxLayout(orientation='horizontal', size_hint_y=None, height=sp(50))
+            cb = CheckBox(active=active, size_hint=(0.15, 1))
+            setattr(self, attr, cb)
+            lbl = Label(text=label_text, font_size=sp(15), halign='left', valign='middle',
+                        size_hint=(0.85, 1))
+            lbl.bind(size=lambda inst, _: setattr(inst, 'text_size', (inst.width, None)))
+            row.add_widget(cb)
+            row.add_widget(lbl)
+            options.add_widget(row)
+
+        scroll.add_widget(options)
+        content.add_widget(scroll)
+
+        # Buttons pinned at bottom
+        btn_row = BoxLayout(orientation='horizontal', size_hint=(1, None), height=sp(52), spacing=8)
+        btn_apply = Button(text='Apply', font_size=sp(16))
+        btn_close = Button(text='Close', font_size=sp(16))
+        btn_row.add_widget(btn_apply)
+        btn_row.add_widget(btn_close)
+        content.add_widget(btn_row)
+
+        popup = Popup(title='Signal Processing', content=content,
+                      size_hint=(0.85, 0.8))
+        btn_apply.bind(on_press=lambda x: self._on_filter_apply(popup))
+        btn_close.bind(on_press=lambda x: popup.dismiss())
+        popup.open()
+
+    def _on_filter_apply(self, popup):
+        self._filt_bandpass = self._cb_bandpass.active
+        self._filt_notch = self._cb_notch.active
+        self._filt_rectify = self._cb_rectify.active
+        self._filt_envelope = self._cb_envelope.active
+        popup.dismiss()
+        self._invalidate_cache()
+        self._update_display()
+
+    def _invalidate_cache(self):
+        self._cached_ch_idx = -1
+        self._cached_signal = None
+
+    def _ensure_filtered_signal(self):
+        """Ensure filtered signal is cached for the current channel.
+
+        If the cache is valid, calls _update_display immediately.
+        If not, kicks off a background thread and returns (display updates when done).
+        Returns True if cache is ready, False if filtering in background.
+        """
+        ch = self._channel_idx
+        if self._cached_ch_idx == ch and self._cached_signal is not None:
+            return True
+
+        signal = self._data[ch]
+        if not (self._filt_bandpass or self._filt_notch
+                or self._filt_rectify or self._filt_envelope):
+            self._cached_ch_idx = ch
+            self._cached_signal = signal
+            return True
+
+        # Show progress bar, then filter in background
+        self._ch_label.text = 'Applying filters...'
+        self._filter_progress.value = 0
+        self._filter_progress.opacity = 1
+
+        # Count total filter steps for progress
+        steps = []
+        if self._filt_bandpass:
+            steps.append('bp')
+        if self._filt_notch:
+            steps.append('notch')
+        if self._filt_rectify:
+            steps.append('rect')
+        if self._filt_envelope:
+            steps.append('env')
+        total_steps = len(steps)
+
+        do_bp = self._filt_bandpass
+        do_notch = self._filt_notch
+        do_rect = self._filt_rectify
+        do_env = self._filt_envelope
+
+        def set_progress(pct):
+            Clock.schedule_once(lambda dt: setattr(self._filter_progress, 'value', pct), 0)
+
+        def run():
+            done = 0
+            data = signal[np.newaxis, :].copy()
+            if do_bp:
+                data = butter_bandpass(data)
+                done += 1
+                set_progress(done / total_steps * 100)
+            if do_notch:
+                data = notch(data)
+                done += 1
+                set_progress(done / total_steps * 100)
+            if do_rect:
+                data = rectify(data)
+                done += 1
+                set_progress(done / total_steps * 100)
+            if do_env:
+                if not do_rect:
+                    data = rectify(data)
+                b = np.array(CFG.LOWPASS_10_4_B)
+                a = np.array(CFG.LOWPASS_10_4_A)
+                data = filtfilt(b, a, data)
+                done += 1
+                set_progress(done / total_steps * 100)
+            self._cached_ch_idx = ch
+            self._cached_signal = data[0]
+
+            def finish(dt):
+                self._filter_progress.opacity = 0
+                self._update_display()
+            Clock.schedule_once(finish, 0)
+
+        threading.Thread(target=run, daemon=True).start()
+        return False
 
     # ------------------------------------------------------------------
     # Time navigation
@@ -274,15 +443,21 @@ class AnalysisPlotScreen(Screen):
     def _update_display(self, update_slider=True):
         if self._data is None:
             return
+
+        # Ensure filtered signal is ready; if not, background thread will call us back
+        if not self._ensure_filtered_signal():
+            return
+
         n_ch = self._data.shape[0]
         self._filename_label.text = self._filename
         self._ch_label.text = f'Channel {self._channel_idx + 1} / {n_ch}'
+        signal = self._cached_signal
 
-        # Fix Y-axis to the full channel's range
-        signal = self._data[self._channel_idx]
-        self._plot.set_y_range(float(signal.min()), float(signal.max()))
+        # Fix Y-axis to the full raw channel's range (stable across scrolling)
+        raw = self._data[self._channel_idx]
+        self._plot.set_y_range(float(raw.min()), float(raw.max()))
 
-        # Slice visible data using time window
+        # Slice visible window from the cached filtered signal
         if self._ts is not None and len(self._ts) > 1:
             t0 = float(self._ts[0])
             start_idx = int(np.searchsorted(self._ts, t0 + self._view_start))
@@ -314,14 +489,16 @@ class AnalysisPlotScreen(Screen):
     # Channel navigation
     # ------------------------------------------------------------------
 
-    def _prev_ch(self, *_):
+    def _on_ch_input(self, *_):
         if self._data is None:
             return
-        self._channel_idx = (self._channel_idx - 1) % self._data.shape[0]
-        self._update_display()
-
-    def _next_ch(self, *_):
-        if self._data is None:
+        try:
+            ch = int(self._ch_input.text) - 1
+        except (ValueError, TypeError):
             return
-        self._channel_idx = (self._channel_idx + 1) % self._data.shape[0]
+        n_ch = self._data.shape[0]
+        if ch < 0 or ch >= n_ch:
+            self._ch_label.text = f'Invalid (1-{n_ch})'
+            return
+        self._channel_idx = ch
         self._update_display()

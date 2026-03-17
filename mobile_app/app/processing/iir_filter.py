@@ -60,11 +60,13 @@ def _lfilter_1d(b, a, x, M):
         y[:] = b[0] * x
         return y
     z = np.zeros(M)
+    b0 = b[0]
+    b_tail = b[1:M + 1]
+    a_tail = a[1:M + 1]
     for i in range(n):
-        yi = b[0] * x[i] + z[0]
-        for j in range(M - 1):
-            z[j] = b[j + 1] * x[i] - a[j + 1] * yi + z[j + 1]
-        z[M - 1] = b[M] * x[i] - a[M] * yi
+        yi = b0 * x[i] + z[0]
+        z[:-1] = b_tail[:-1] * x[i] - a_tail[:-1] * yi + z[1:]
+        z[-1] = b_tail[-1] * x[i] - a_tail[-1] * yi
         y[i] = yi
     return y
 

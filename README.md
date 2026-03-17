@@ -93,6 +93,18 @@ cd desktop_app
 python -m pytest tests/ -v
 ```
 
+### CI/CD
+
+A GitHub Actions workflow (`.github/workflows/ci.yml`) runs the test suite automatically on every push and pull request to `main`.
+
+The workflow:
+1. Runs on `ubuntu-latest`
+2. Installs system libraries required by PyQt5 (`libgl1`, `libglib2.0-0`, `libxcb-xinerama0`)
+3. Installs Python dependencies from `requirements.txt`
+4. Runs `pytest` with `QT_QPA_PLATFORM=offscreen` so PyQt5 works without a display
+
+Status is visible in the **Actions** tab of the GitHub repository.
+
 | Test file | Module under test |
 |---|---|
 | `test_filters.py` | `app/processing/filters` — bandpass, notch, rectify |

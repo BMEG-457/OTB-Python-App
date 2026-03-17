@@ -132,6 +132,10 @@ Displays all EMG and auxiliary channels as scrollable waveform plots. Each track
 
 Shows the auxiliary channels (channels 65–72): accelerometer, gyroscope, and other auxiliary signals depending on the device configuration.
 
+**HD-sEMG**
+
+Averaged channel view for the 64-channel HD-sEMG array. Allows selecting specific channels for group averaging, useful for inspecting spatial regions of the electrode grid.
+
 **Individual Channels**
 
 Shows a single selected channel's waveform in detail, useful for inspecting signal quality on a specific electrode.

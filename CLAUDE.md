@@ -4,24 +4,22 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Commands
 
-All commands run from `"BMEG 457 scripts/"` unless noted.
-
 ```bash
 # Run the app
-cd "BMEG 457 scripts" && python main.py
+cd desktop_app && python main.py
 
 # Install dependencies (run from repo root)
 pip install -r requirements.txt
 
-# Build standalone executable (run from repo root, requires pyinstaller)
-python build.py
-# Output: dist/OTB-EMG/ — distribute the entire folder
+# Build standalone executable (run from desktop_app/, requires pyinstaller)
+cd desktop_app && python build.py
+# Output: desktop_app/dist/OTB-EMG/ — distribute the entire folder
 ```
 
-No automated test suite exists. The `tests/` directory contains standalone scripts for validating individual signal processing functions (e.g. `activationtimings_tkeo.py`, `fatigue.py`). Run them directly:
+No automated test suite exists. Standalone signal processing validation scripts are in `exploratory testing/`. Run them directly:
 
 ```bash
-python "BMEG 457 scripts/tests/activationtimings_tkeo.py"
+python "exploratory testing/activationtimings_tkeo.py"
 ```
 
 ## Code Style
@@ -33,7 +31,7 @@ python "BMEG 457 scripts/tests/activationtimings_tkeo.py"
 
 ### Entry Point & Button Wiring
 
-`main.py` is the true wiring layer. It creates all three top-level windows (`SelectionWindow`, `SoundtrackWindow`, `DataAnalysisWindow`), lazy-initializes the device TCP connection on first stream/calibrate/record action, and connects `calibrate_button`, `stream_button`, and `record_button` to handlers. These three buttons are **not** wired inside `SoundtrackWindow` itself — always look in `main.py` for their behavior.
+`main.py` is the true wiring layer. It creates all three top-level windows (`SelectionWindow`, `SoundtrackWindow`, `DataAnalysisWindow`), lazy-initializes the device TCP connection on first connect action, and connects `connect_button`, `calibrate_button`, `stream_button`, and `record_button` to handlers. These buttons are **not** wired inside `SoundtrackWindow` itself — always look in `main.py` for their behavior.
 
 ### Live Streaming Data Flow
 
@@ -76,7 +74,7 @@ Channel-to-grid mapping for the 8x8 heatmap: `channel_idx = col * 8 + (7 - row)`
 
 ### Data Analysis Mode
 
-`DataAnalysisWindow` is fully independent of live mode. It uses `CSVLoader` to load recordings, `AnalysisTrackManager` to manage static plot tracks, and `TimeNavigationController` for scrubbing. Signal processing is applied on-demand via `DataViewingPanel` controls. Feature analysis (TKEO timing, burst duration, fatigue, bilateral symmetry) is triggered from `FeaturesPanel` buttons.
+`DataAnalysisWindow` is fully independent of live mode. It uses `CSVDataLoader` to load recordings, `AnalysisTrackManager` to manage static plot tracks, and `TimeNavigationController` for scrubbing. Signal processing is applied on-demand via `DataViewingPanel` controls. Feature analysis (TKEO timing, burst duration, fatigue, bilateral symmetry, centroid shift, spatial non-uniformity) is triggered from `FeaturesPanel` buttons.
 
 ### Path Resolution
 

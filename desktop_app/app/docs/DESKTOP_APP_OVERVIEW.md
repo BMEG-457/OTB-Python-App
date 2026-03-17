@@ -39,6 +39,6 @@ For the full structure and explanation of each module, see [DEVELOPER_GUIDE.md](
 - **Lazy connection**: the TCP socket is opened only when the user clicks Connect, not at startup.
 - **Thread architecture**: `DataReceiverThread` (QThread) runs for the entire session; `StreamingController` only toggles a `running` flag.
 - **Pipeline registry**: named lists of processing stages applied per incoming packet (`filtered`, `rectified`, `final`).
-- **BaseTab**: abstract base class enforcing a two-panel layout (content left, controls right) for all live-mode tabs.
+- **BaseTab**: abstract base class enforcing a two-panel layout (content left, controls right) for all live-mode tabs: `AllTracksTab`, `AccessoryTab`, `HDsEMGTab`, `HeatmapTab`, `IndividualChannelsTab`, `FeaturesTab`.
 - **config.json**: single source of truth for all parameters; loaded once at startup by `Config`.
 - **Path resolution**: `app/core/paths.py` handles source vs. frozen (PyInstaller) path differences.

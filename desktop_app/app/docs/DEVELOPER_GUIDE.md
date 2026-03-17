@@ -65,7 +65,7 @@ desktop_app/
         │   └── dialogs.py           CalibrationDialog, ChannelSelectorDialog, TrackVisibilityDialog
         ├── tabs/
         │   ├── base_tab.py          Abstract BaseTab — enforces two-panel layout
-        │   └── tab_implementations.py AllTracksTab, AccessoryTab, HeatmapTab, IndividualChannelsTab, FeaturesTab
+        │   └── tab_implementations.py AllTracksTab, AccessoryTab, HDsEMGTab, HeatmapTab, IndividualChannelsTab, FeaturesTab
         └── panels/
             ├── data_viewing_panel.py Signal processing controls (analysis mode)
             └── features_panel.py    Feature extraction buttons (analysis mode)
@@ -399,6 +399,7 @@ SelectionWindow          (400×300, startup mode selector)
     │       └── QTabWidget
     │             ├── AllTracksTab           scrollable list of all EMG track plots
     │             ├── AccessoryTab           auxiliary channels (AUX 1–8)
+    │             ├── HDsEMGTab              HD-sEMG averaged channel view
     │             ├── HeatmapTab             8×8 normalized activation heatmap
     │             ├── IndividualChannelsTab  single-channel detail view
     │             └── FeaturesTab            live rolling feature plots

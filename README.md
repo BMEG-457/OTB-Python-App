@@ -8,12 +8,10 @@ A PyQt5-based desktop application for real-time High-Density Surface Electromyog
 
 ```
 OTB-Python-App/
-├── desktop_app/        Main application (Python + PyQt5, Windows)
-├── mobile_app/         Android port (Python + Kivy, deployable APK included)
-├── mobile_app_team/    Partial scaffold (reference only, not runnable)
-├── exploratory testing/ Standalone signal processing scripts
-├── requirements.txt    Python dependencies for the desktop app
-└── MOBILE_APP_COMPARISON.md  Detailed comparison of the two mobile implementations
+├── desktop_app/         Main application (Python + PyQt5, Windows)
+├── exploratory testing/ Standalone signal processing and analysis scripts
+├── OTB files/           Original OTB device reference scripts
+└── requirements.txt     Python dependencies for the desktop app
 ```
 
 ---
@@ -24,7 +22,7 @@ OTB-Python-App/
 
 **Live Data Mode**
 - 64-channel real-time EMG streaming from the Sessantaquattro+ over WiFi
-- Five visualization tabs: All Tracks, Accessory channels, Heatmap, Individual Channels, Features
+- Six visualization tabs: All Tracks, Accessory channels, HD-sEMG, Heatmap, Individual Channels, Features
 - 8×8 heatmap of muscle activation normalized to MVC
 - Live contraction detection with hysteresis
 - Battery level polling via HTTP (independent of data stream)
@@ -95,19 +93,6 @@ Full documentation is in `desktop_app/app/docs/`:
 | [USER_GUIDE.md](desktop_app/app/docs/USER_GUIDE.md) | Hardware setup, connecting, calibration, recording, all tabs, data analysis, troubleshooting |
 | [DEVELOPER_GUIDE.md](desktop_app/app/docs/DEVELOPER_GUIDE.md) | Architecture, TCP protocol, live pipeline, signal processing, UI/tab patterns, build system |
 | [DESIGN_RATIONALE.md](desktop_app/app/docs/DESIGN_RATIONALE.md) | Justification and literature sources for all constants, thresholds, and algorithm choices |
-
----
-
-## Mobile App
-
-`mobile_app/` is a complete Kivy-based Android port of the desktop app. A compiled debug APK is included at `mobile_app/bin/`.
-
-Key differences from the desktop app:
-- All scipy calls replaced with pure-numpy implementations (`iir_filter.py`) for Android compatibility
-- Filter coefficients pre-computed offline and stored in `config.json`
-- UI built entirely in Python (no `.kv` files) for compatibility with Buildozer
-
-See [MOBILE_APP_COMPARISON.md](MOBILE_APP_COMPARISON.md) for a detailed comparison of `mobile_app/` and `mobile_app_team/`.
 
 ---
 

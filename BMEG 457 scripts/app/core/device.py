@@ -1,12 +1,15 @@
+import re
 import socket
+import urllib.request
 
 from app.core.config import Config
 
 
 class SessantaquattroPlus:
-    def __init__(self, host=None, port=None):
+    def __init__(self, host=None, port=None, emulator_mode=False):
         self.host = host if host is not None else Config.DEVICE_HOST
         self.port = port if port is not None else Config.DEVICE_PORT
+        self.emulator_mode = emulator_mode
         self.nchannels = 72
         self.frequency = 2000
         self.server_socket = None
@@ -84,6 +87,9 @@ class SessantaquattroPlus:
 
     def is_connected_to_device_network(self, device_network_prefix=None):
         """Check if connected to the device's WiFi network"""
+        if self.emulator_mode:
+            print("Emulator mode — skipping network check")
+            return True
         if device_network_prefix is None:
             device_network_prefix = Config.DEVICE_NETWORK_PREFIX
         try:
@@ -149,37 +155,27 @@ class SessantaquattroPlus:
             raise RuntimeError(f"Server error: {e}")
 
     def get_battery_level(self):
-        """Query battery percentage. Returns 0-100 or None on error.
+        """Query battery via the device's HTTP status page. Returns 0-100 or None.
 
-        Per TCP protocol spec, INFO[2:0] = 010 requests battery level:
-          BYTE 0: 0x80  (bit 7 GETSET=1, all other bits 0)
-          BYTE 1: 0x02  (bits [2:0] = 010 → battery %)
-        Device replies with a single byte (0-100).
-
-        NOTE: Device does not respond to GET commands before GO=1 (pre-GO window
-        times out at all tested delays). Safe window is between sessions: after the
-        old socket is closed (device returns to searching) and before GO=1 is sent
-        on the new connection. Called by BatteryWorker in main.py.
+        The Sessantaquattro+ runs a web server at its gateway IP (192.168.1.1).
+        The HTML contains: <td>Battery Level:</td><td>NN%</td>
+        This is independent of the TCP data socket, so it works before, during,
+        or after streaming without interfering with EMG data.
         """
+        url = f"http://{Config.DEVICE_GATEWAY_IP}/"
         try:
-            cmd = bytes([0x80, 0x02])
-            print(f"[BATTERY] Sending GET command: {cmd.hex()}")
-            self.client_socket.send(cmd)
-            self.client_socket.settimeout(5.0)
-            response = self.client_socket.recv(1)
-            print(f"[BATTERY] Raw response ({len(response)} bytes): {response.hex() if response else 'empty'}")
-            self.client_socket.settimeout(None)
-            if response:
-                level = response[0]
-                print(f"[BATTERY] Decoded battery level: {level}%")
+            req = urllib.request.Request(url, method='GET')
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                html = resp.read().decode('utf-8', errors='replace')
+            match = re.search(r'Battery\s*Level:\s*</td>\s*<td>\s*(\d+)%', html)
+            if match:
+                level = int(match.group(1))
+                print(f"[BATTERY] HTTP query: {level}%")
                 return level
+            print("[BATTERY] Could not parse battery level from HTML")
             return None
         except Exception as e:
-            print(f"Error querying battery level: {e}")
-            try:
-                self.client_socket.settimeout(None)
-            except Exception:
-                pass
+            print(f"[BATTERY] HTTP query failed: {e}")
             return None
 
     def send_command(self, command):

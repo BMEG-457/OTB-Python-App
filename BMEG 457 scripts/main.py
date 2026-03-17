@@ -1,9 +1,36 @@
+import os
+import threading
+
 from PyQt5 import QtWidgets, QtCore
 import pyqtgraph as pg
 
 from app.core.device import SessantaquattroPlus
 from app.ui.windows.main_window import SoundtrackWindow
 from app.ui.windows.data_analysis_window import DataAnalysisWindow
+
+
+class BatteryPoller(QtCore.QObject):
+    """Polls battery level via HTTP in a background thread."""
+    battery_updated = QtCore.pyqtSignal(object)  # int or None
+
+    def __init__(self, device, parent=None):
+        super().__init__(parent)
+        self.device = device
+        self._timer = QtCore.QTimer(self)
+        self._timer.timeout.connect(self._poll)
+
+    def start(self, interval_ms=30000):
+        self._poll()  # immediate first query
+        self._timer.start(interval_ms)
+
+    def stop(self):
+        self._timer.stop()
+
+    def _poll(self):
+        def query():
+            level = self.device.get_battery_level()
+            self.battery_updated.emit(level)
+        threading.Thread(target=query, daemon=True).start()
 
 
 class SelectionWindow(QtWidgets.QWidget):
@@ -54,7 +81,7 @@ def main():
     pg.setConfigOptions(antialias=True)
 
     # Create device object, but DO NOT connect yet
-    device = SessantaquattroPlus()
+    device = SessantaquattroPlus(emulator_mode=os.getenv("SESSANTAQUATTRO_EMULATOR") == "1")
 
     # Create windows
     selection_window = SelectionWindow()
@@ -150,16 +177,22 @@ def main():
     live_data_window.stream_button.clicked.connect(handle_stream_toggle)
     live_data_window.record_button.clicked.connect(handle_record_toggle)
 
+    # Battery poller — uses HTTP, independent of TCP streaming
+    battery_poller = BatteryPoller(device)
+    battery_poller.battery_updated.connect(live_data_window.update_battery_display)
+
     # Navigation handlers
     def show_live_data():
         selection_window.hide()
         live_data_window.show()
+        battery_poller.start()
 
     def show_data_analysis():
         selection_window.hide()
         data_analysis_window.show()
 
     def back_to_selection_from_live():
+        battery_poller.stop()
         # Stop streaming if active
         if live_data_window.streaming_controller and live_data_window.streaming_controller.is_streaming:
             live_data_window.streaming_controller.stop_streaming()

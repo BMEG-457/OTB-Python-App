@@ -1,7 +1,10 @@
 """Post-session data analysis screen."""
 
 import csv
+import os
 import threading
+from datetime import datetime
+
 import numpy as np
 
 from kivy.uix.screenmanager import Screen
@@ -82,6 +85,7 @@ class DataAnalysisScreen(Screen):
         self._data2 = None
 
         self._pending_bilateral = False
+        self._feature_store = {}
 
         self._build_ui()
 
@@ -128,7 +132,10 @@ class DataAnalysisScreen(Screen):
         self.channel_input = TextInput(text='1', size_hint=(0.12, 1), font_size=sp(15),
                                        input_filter='int', multiline=False, halign='center')
         ch_bar.add_widget(self.channel_input)
-        ch_bar.add_widget(Label(size_hint=(0.73, 1)))  # spacer
+        ch_bar.add_widget(Label(size_hint=(0.58, 1)))  # spacer
+        btn_export = Button(text='Export', size_hint=(0.15, 1), font_size=sp(15))
+        btn_export.bind(on_press=self._on_export_results)
+        ch_bar.add_widget(btn_export)
         root.add_widget(ch_bar)
 
         # Analysis buttons
@@ -175,8 +182,6 @@ class DataAnalysisScreen(Screen):
         Shows subdirectories and CSV files.  Tap a directory to enter it;
         tap a CSV to select it.  A '[..] Up' row returns to the parent.
         """
-        import os
-
         # Test actual readability — os.path.isdir can succeed even when
         # os.listdir is denied (different syscalls, different permission checks).
         # user_data_dir (private internal storage) is always accessible and is
@@ -333,7 +338,6 @@ class DataAnalysisScreen(Screen):
 
     def _load_file(self, slot, path):
         """Load a CSV file into slot 1 or 2."""
-        import os
         name = os.path.basename(path)
         self._set_results(f'Loading {name}...')
 
@@ -350,6 +354,7 @@ class DataAnalysisScreen(Screen):
 
         if slot == 1:
             self._file1, self._ts1, self._data1 = path, ts, data
+            self._feature_store = {}
             self.file1_label.text = f'{name} ({data.shape[0]} ch, {data.shape[1]} samples)'
         else:
             self._file2, self._ts2, self._data2 = path, ts, data
@@ -383,6 +388,18 @@ class DataAnalysisScreen(Screen):
             return None
         return ch
 
+    def _store_feature(self, type_key, ch_idx, result, meta=None):
+        """Accumulate a feature result, replacing any prior entry for the same channel."""
+        if type_key not in self._feature_store:
+            self._feature_store[type_key] = {'results': [], 'meta': {}}
+        results = self._feature_store[type_key]['results']
+        self._feature_store[type_key]['results'] = [
+            (ci, r) for ci, r in results if ci != ch_idx
+        ]
+        self._feature_store[type_key]['results'].append((ch_idx, result))
+        if meta is not None:
+            self._feature_store[type_key]['meta'] = meta
+
     def _run_tkeo(self, instance):
         if not self._require_file1():
             return
@@ -400,6 +417,7 @@ class DataAnalysisScreen(Screen):
             if result is None:
                 text = 'Activation timing: analysis failed (check data quality).'
             else:
+                self._store_feature('tkeo', ch_idx, result)
                 n = len(result.onset_times)
                 times = ', '.join(f'{t:.2f}s' for t in result.onset_times[:10])
                 suffix = '...' if n > 10 else ''
@@ -431,6 +449,7 @@ class DataAnalysisScreen(Screen):
             if result is None:
                 text = 'Burst duration: analysis failed.'
             else:
+                self._store_feature('burst', ch_idx, result)
                 text = (
                     f'Burst Duration — Channel {ch_num}\n'
                     f'  Bursts detected: {result.num_bursts}\n'
@@ -461,6 +480,7 @@ class DataAnalysisScreen(Screen):
             if result is None:
                 text = 'Fatigue: analysis failed.'
             else:
+                self._store_feature('fatigue', ch_idx, result)
                 rms_onset = (
                     f'{result.time_to_rms_fatigue[0]:.2f} s'
                     if result.time_to_rms_fatigue is not None else 'Not detected'
@@ -516,6 +536,14 @@ class DataAnalysisScreen(Screen):
             if result is None:
                 text = 'Bilateral symmetry: analysis failed.'
             else:
+                self._feature_store['bilateral'] = {
+                    'results': [(0, result)],
+                    'meta': {
+                        'file1': os.path.basename(self._file1) if self._file1 else '',
+                        'file2': os.path.basename(self._file2) if self._file2 else '',
+                        'ch1_idx': ch_idx, 'ch2_idx': ch_idx_2,
+                    },
+                }
                 text = (
                     f'Bilateral Symmetry Index — Channel {ch_num}\n'
                     f'  Mean SI: {result.mean_si:.4f}  '
@@ -547,6 +575,9 @@ class DataAnalysisScreen(Screen):
             if result is None:
                 text = 'Centroid shift: analysis failed.'
             else:
+                self._feature_store['centroid'] = {
+                    'results': [(0, result)], 'meta': {},
+                }
                 text = (
                     f'Centroid Shift (HD-EMG 8x8 grid)\n'
                     f'  Initial centroid: ({result.initial_centroid[0]:.2f}, '
@@ -576,6 +607,9 @@ class DataAnalysisScreen(Screen):
             if result is None:
                 text = 'Spatial non-uniformity: analysis failed.'
             else:
+                self._feature_store['spatial'] = {
+                    'results': [(0, result)], 'meta': {},
+                }
                 text = (
                     f'Spatial Non-Uniformity (HD-EMG 8x8 grid)\n'
                     f'  Threshold source: {result.threshold_source}\n'
@@ -593,11 +627,221 @@ class DataAnalysisScreen(Screen):
         threading.Thread(target=run, daemon=True).start()
 
     # ------------------------------------------------------------------
+    # Export
+    # ------------------------------------------------------------------
+
+    def _on_export_results(self, _):
+        """Export processed signal and feature analysis results to CSV."""
+        if self._data1 is None:
+            self._set_results('Load a recording file first.')
+            return
+
+        src_dir = os.path.dirname(self._file1)
+        base_name = os.path.splitext(os.path.basename(self._file1))[0]
+        out_path = os.path.join(src_dir, f'{base_name}_export.csv')
+
+        try:
+            with open(out_path, 'w', newline='', encoding='utf-8') as f:
+                w = csv.writer(f)
+                self._write_export_metadata(w)
+                headers, rows = self._build_export_table()
+                if headers:
+                    w.writerow(headers)
+                    w.writerows(rows)
+                else:
+                    w.writerow(['# No analyses have been run'])
+            self._set_results(f'Export saved to:\n{out_path}')
+        except Exception as e:
+            self._set_results(f'Export failed: {e}')
+
+    def _write_export_metadata(self, w):
+        """Write comment rows with file info and feature summaries."""
+        ts = self._ts1
+        base_time = ts[0]
+        fs = _estimated_fs(ts)
+
+        w.writerow(['# OTB-EMG Analysis Export'])
+        w.writerow([f'# Source: {os.path.basename(self._file1)}'])
+        w.writerow([f'# Exported: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}'])
+        w.writerow([f'# Channels: {self._data1.shape[0]}'])
+        w.writerow([f'# Sample rate: {fs:.1f} Hz'])
+        w.writerow([f'# Duration: {ts[-1] - ts[0]:.3f} s'])
+        w.writerow([])
+
+        # Filter state from the plot screen (if available)
+        try:
+            plot_screen = self.manager.get_screen('analysis_plot')
+            w.writerow([f'# Bandpass: {plot_screen._filt_bandpass}'])
+            w.writerow([f'# Notch: {plot_screen._filt_notch}'])
+            w.writerow([f'# Rectified: {plot_screen._filt_rectify}'])
+            w.writerow([f'# Envelope: {plot_screen._filt_envelope}'])
+        except Exception:
+            pass
+
+        if 'tkeo' in self._feature_store:
+            for ch_idx, result in self._feature_store['tkeo']['results']:
+                w.writerow([
+                    f'# TKEO Ch{ch_idx + 1}: onsets={len(result.onset_times)}, '
+                    f'detect_thresh={result.detection_threshold:.8f}, '
+                    f'backtrack_thresh={result.backtrack_threshold:.8f}'
+                ])
+
+        if 'burst' in self._feature_store:
+            for ch_idx, result in self._feature_store['burst']['results']:
+                w.writerow([
+                    f'# Burst Ch{ch_idx + 1}: bursts={result.num_bursts}, '
+                    f'avg_duration={result.avg_duration:.4f}s, '
+                    f'std_duration={result.std_duration:.4f}s'
+                ])
+
+        if 'bilateral' in self._feature_store:
+            meta = self._feature_store['bilateral']['meta']
+            _, result = self._feature_store['bilateral']['results'][0]
+            w.writerow([
+                f'# Bilateral: file1={meta.get("file1", "")}/Ch{meta.get("ch1_idx", 0) + 1} '
+                f'vs file2={meta.get("file2", "")}/Ch{meta.get("ch2_idx", 0) + 1}, '
+                f'overlap={result.overlap_duration:.3f}s, '
+                f'mean_SI={result.mean_si:+.6f}, std_SI={result.std_si:.6f}, '
+                f'max_asym={result.max_asymmetry:.6f}, '
+                f'RMS1={result.rms_file1:.8f}, RMS2={result.rms_file2:.8f}'
+            ])
+
+        if 'fatigue' in self._feature_store:
+            for ch_idx, result in self._feature_store['fatigue']['results']:
+                rms_onset = (
+                    f'{result.time_to_rms_fatigue[0] - base_time:.3f}s'
+                    if result.time_to_rms_fatigue is not None and len(result.time_to_rms_fatigue) > 0
+                    else 'not detected'
+                )
+                mf_onset = (
+                    f'{result.time_to_mf_fatigue[0] - base_time:.3f}s'
+                    if result.time_to_mf_fatigue is not None and len(result.time_to_mf_fatigue) > 0
+                    else 'not detected'
+                )
+                w.writerow([
+                    f'# Fatigue Ch{ch_idx + 1}: baseline_rms={result.baseline_rms:.8f}, '
+                    f'rms_onset={rms_onset}, mf_onset={mf_onset}'
+                ])
+
+        if 'spatial' in self._feature_store:
+            _, result = self._feature_store['spatial']['results'][0]
+            w.writerow([
+                f'# Spatial: threshold_source={result.threshold_source}, '
+                f'mean_cv={float(result.cv.mean()):.6f}, '
+                f'mean_entropy={float(result.entropy.mean()):.6f} bits, '
+                f'mean_activation_frac={float(result.activation_fraction.mean()):.6f}'
+            ])
+
+        if 'centroid' in self._feature_store:
+            _, result = self._feature_store['centroid']['results'][0]
+            cx0, cy0 = result.initial_centroid
+            w.writerow([
+                f'# Centroid: initial=({cx0:.4f},{cy0:.4f}), '
+                f'total_shift={result.total_shift:.6f} electrode-units, '
+                f'mean_drift={result.mean_drift_rate:.6f} electrode-units/s'
+            ])
+
+        w.writerow([])
+
+    def _build_export_table(self):
+        """Build columnar export table. Returns (headers, rows)."""
+        ts = self._ts1
+        base_time = ts[0]
+        headers = []
+        columns = []
+
+        # Signal columns — selected channel
+        ch_idx = self._selected_channel()
+        if ch_idx is not None:
+            headers.append('time_s')
+            columns.append([round(float(t), 6) for t in ts])
+            headers.append(f'Ch{ch_idx + 1}_EMG')
+            columns.append([round(float(v), 8) for v in self._data1[ch_idx]])
+
+        # TKEO columns
+        if 'tkeo' in self._feature_store:
+            for ci, result in self._feature_store['tkeo']['results']:
+                env_base = result.timestamps[0]
+                headers += [
+                    f'TKEO_Ch{ci + 1}_env_time_s',
+                    f'TKEO_Ch{ci + 1}_envelope',
+                    f'TKEO_Ch{ci + 1}_onset_num',
+                    f'TKEO_Ch{ci + 1}_onset_time_s',
+                ]
+                columns.append([round(float(t) - env_base, 6) for t in result.timestamps])
+                columns.append([round(float(v), 10) for v in result.tkeo_envelope])
+                columns.append(list(range(1, len(result.onset_times) + 1)))
+                columns.append([round(float(t) - base_time, 6) for t in result.onset_times])
+
+        # Burst columns
+        if 'burst' in self._feature_store:
+            for ci, result in self._feature_store['burst']['results']:
+                headers += [
+                    f'Burst_Ch{ci + 1}_num',
+                    f'Burst_Ch{ci + 1}_duration_s',
+                ]
+                columns.append(list(range(1, len(result.burst_durations) + 1)))
+                columns.append([round(float(d), 6) for d in result.burst_durations])
+
+        # Bilateral columns
+        if 'bilateral' in self._feature_store:
+            _, result = self._feature_store['bilateral']['results'][0]
+            si_base = result.timestamps[0]
+            headers += ['Bilateral_time_s', 'Bilateral_SI']
+            columns.append([round(float(t) - si_base, 6) for t in result.timestamps])
+            columns.append([round(float(v), 8) for v in result.symmetry_index])
+
+        # Fatigue columns
+        if 'fatigue' in self._feature_store:
+            for ci, result in self._feature_store['fatigue']['results']:
+                headers += [
+                    f'Fatigue_Ch{ci + 1}_time_s',
+                    f'Fatigue_Ch{ci + 1}_RMS',
+                    f'Fatigue_Ch{ci + 1}_MF_Hz',
+                ]
+                columns.append([round(float(t) - base_time, 6) for t in result.rms_times])
+                columns.append([round(float(r), 8) for r in result.rms_values])
+                columns.append([round(float(m), 4) for m in result.mf_values])
+
+        # Spatial columns
+        if 'spatial' in self._feature_store:
+            _, result = self._feature_store['spatial']['results'][0]
+            headers += [
+                'Spatial_time_s', 'Spatial_CV',
+                'Spatial_entropy_bits', 'Spatial_activation_frac',
+            ]
+            columns.append([round(float(t) - base_time, 6) for t in result.times])
+            columns.append([round(float(c), 6) for c in result.cv])
+            columns.append([round(float(e), 6) for e in result.entropy])
+            columns.append([round(float(a), 6) for a in result.activation_fraction])
+
+        # Centroid columns
+        if 'centroid' in self._feature_store:
+            _, result = self._feature_store['centroid']['results'][0]
+            headers += [
+                'Centroid_time_s', 'Centroid_col',
+                'Centroid_row', 'Centroid_disp',
+            ]
+            columns.append([round(float(t) - base_time, 6) for t in result.times])
+            columns.append([round(float(x), 6) for x in result.centroid_x])
+            columns.append([round(float(y), 6) for y in result.centroid_y])
+            columns.append([round(float(d), 6) for d in result.displacement])
+
+        if not columns:
+            return headers, []
+
+        max_rows = max(len(col) for col in columns)
+        rows = []
+        for i in range(max_rows):
+            rows.append([col[i] if i < len(col) else '' for col in columns])
+
+        return headers, rows
+
+    # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
 
     def _show_plot(self, _):
-        import os
         if self._data1 is None:
             self._set_results('Load a file first to plot.')
             return

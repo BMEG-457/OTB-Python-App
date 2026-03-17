@@ -472,7 +472,8 @@ class DataAnalysisWindow(QtWidgets.QWidget):
         sample_rate = self.csv_loader.sample_rate
         base_time = timestamps[0]
 
-        self._feature_store['tkeo'] = {'results': []}
+        if 'tkeo' not in self._feature_store:
+            self._feature_store['tkeo'] = {'results': [], 'meta': {}}
 
         errors = []
         results_text_parts = []
@@ -489,6 +490,10 @@ class DataAnalysisWindow(QtWidgets.QWidget):
                 errors.append(f"Channel {ch_idx + 1}")
                 continue
 
+            # Replace any existing entry for this channel, then append
+            self._feature_store['tkeo']['results'] = [
+                (ci, r) for ci, r in self._feature_store['tkeo']['results'] if ci != ch_idx
+            ]
             self._feature_store['tkeo']['results'].append((ch_idx, result))
 
             title = f"TKEO Activation - Ch {ch_idx + 1} ({len(result.onset_times)} onsets)"
@@ -547,7 +552,8 @@ class DataAnalysisWindow(QtWidgets.QWidget):
         timestamps = self.csv_loader.timestamps
         sample_rate = self.csv_loader.sample_rate
 
-        self._feature_store['burst'] = {'results': []}
+        if 'burst' not in self._feature_store:
+            self._feature_store['burst'] = {'results': [], 'meta': {}}
 
         errors = []
         results_text_parts = []
@@ -564,6 +570,9 @@ class DataAnalysisWindow(QtWidgets.QWidget):
                 errors.append(f"Channel {ch_idx + 1}")
                 continue
 
+            self._feature_store['burst']['results'] = [
+                (ci, r) for ci, r in self._feature_store['burst']['results'] if ci != ch_idx
+            ]
             self._feature_store['burst']['results'].append((ch_idx, result))
 
             lines = [
@@ -782,7 +791,8 @@ class DataAnalysisWindow(QtWidgets.QWidget):
         sample_rate = self.csv_loader.sample_rate
         base_time = timestamps[0]
 
-        self._feature_store['fatigue'] = {'results': []}
+        if 'fatigue' not in self._feature_store:
+            self._feature_store['fatigue'] = {'results': [], 'meta': {}}
 
         errors = []
         results_text_parts = []
@@ -799,6 +809,9 @@ class DataAnalysisWindow(QtWidgets.QWidget):
                 errors.append(f"Channel {ch_idx + 1}")
                 continue
 
+            self._feature_store['fatigue']['results'] = [
+                (ci, r) for ci, r in self._feature_store['fatigue']['results'] if ci != ch_idx
+            ]
             self._feature_store['fatigue']['results'].append((ch_idx, result))
 
             # Add RMS trend as a feature track

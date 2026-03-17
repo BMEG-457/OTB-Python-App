@@ -16,7 +16,16 @@ cd desktop_app && python build.py
 # Output: desktop_app/dist/OTB-EMG/ — distribute the entire folder
 ```
 
-No automated test suite exists. Standalone signal processing validation scripts are in `exploratory testing/`. Run them directly:
+Run the unit test suite (requires Python 3.14 with app dependencies):
+
+```bash
+cd desktop_app
+python -m pytest tests/ -v
+```
+
+Tests live in `desktop_app/tests/` and cover: filters, pipeline registry, contraction detector, CSV loader, device command encoding, time navigation, and all feature extraction functions. No device or display is required — PyQt5 `QObject` signals work without a running event loop.
+
+Standalone exploratory scripts for manual signal processing validation are in `exploratory testing/`. Run them directly:
 
 ```bash
 python "exploratory testing/activationtimings_tkeo.py"

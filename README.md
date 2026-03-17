@@ -84,6 +84,25 @@ python build.py
 
 Output: `desktop_app/dist/OTB-EMG/`. Distribute the entire folder. Copy `config.json` alongside `OTB-EMG.exe` before distributing.
 
+### Testing
+
+Unit tests are in `desktop_app/tests/`. They cover the non-UI modules: signal processing filters, the pipeline registry, contraction detection, CSV loading, device command encoding, time navigation, and all feature extraction functions. No hardware or display is required.
+
+```bash
+cd desktop_app
+python -m pytest tests/ -v
+```
+
+| Test file | Module under test |
+|---|---|
+| `test_filters.py` | `app/processing/filters` — bandpass, notch, rectify |
+| `test_pipeline.py` | `app/processing/pipeline` — stage chaining, named registry |
+| `test_realtime_detector.py` | `app/processing/realtime_detector` — hysteresis ON/OFF logic |
+| `test_csv_loader.py` | `app/data/csv_loader` — parsing, shape, sample rate estimation |
+| `test_device.py` | `app/core/device` — channel count mapping, frequency mapping, command bit layout |
+| `test_time_navigation.py` | `app/managers/time_navigation_controller` — seek, scroll, zoom, clamping |
+| `test_features.py` | `app/processing/features` — RMS/MAV/IEMG, TKEO timing, burst duration, bilateral symmetry, fatigue, centroid shift, spatial non-uniformity |
+
 ### Documentation
 
 Full documentation is in `desktop_app/app/docs/`:
